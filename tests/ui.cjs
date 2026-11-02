@@ -136,6 +136,7 @@ fs.mkdirSync(out, { recursive: true });
     const preferences = await fresh();
     await check('通用入口在魔法棒、主题令牌与字体规则隔离', async () => {
       assert.equal(await preferences.locator('#extensions_settings2 .prw-open-button').count(), 0);
+      assert.equal(await preferences.locator('#regex_container .prw-open-button').count(), 0);
       assert.equal(await preferences.locator('#prw-wand-container .prw-wand-entry').count(), 1);
       await preferences.addStyleTag({ content: ':root{--SmartThemeBodyColor:rgb(36,70,92);--SmartThemeBlurTintColor:rgb(240,251,255);--SmartThemeQuoteColor:rgb(11,85,119)} :not([class*="fa-"]):not(.fa):not(.fas):not(.far):not(.fab):not(.fal):not(.fad){font-family:serif!important}' });
       const css = await preferences.locator('#prw-panel .prw-window').evaluate(e => ({ bg: getComputedStyle(e).backgroundColor, font: getComputedStyle(document.querySelector('#prw-panel .prw-brand-name')).fontFamily }));
@@ -170,6 +171,28 @@ fs.mkdirSync(out, { recursive: true });
       assert.equal(await preferences.locator('.segmented .active').textContent(), '正则');
     });
     await preferences.close();
+    const entries = await fresh();
+    await check('扩展设置与正则无独立入口，预设炼金瓶图标和纵向布局正常', async () => {
+      await entries.getByRole('button', {name:'关闭', exact:true}).click();
+      await entries.evaluate(() => {
+        const settings = document.createElement('div'); settings.id = 'extensions_settings';
+        document.body.append(settings); settings.append(document.querySelector('#regex_container'));
+      });
+      await entries.addStyleTag({content:'#openai_settings{display:block!important}#openai_api-presets{display:flex!important;flex-direction:column;height:500px!important}#extensions_settings{display:flex!important;flex-direction:column;height:600px}#regex_container{display:contents!important}.menu_button{display:flex;width:min-content;margin:5px 0}'});
+      assert.equal(await entries.locator('#extensions_settings .prw-open-button,#extensions_settings2 .prw-open-button').count(),0);
+      assert.equal(await entries.locator('#regex_container > .prw-entry-row').count(),0);
+      assert.equal(await entries.locator('#prw-preset-entry .fa-flask').count(),1);
+      assert.equal(await entries.locator('#prw-preset-entry').textContent(), 'Cの炼金工坊');
+      for (const width of [320,390,1440]) {
+        await entries.setViewportSize({width,height:844});
+        const bounds=await entries.locator('#prw-preset-entry').evaluate(e=>{const b=e.querySelector('button').getBoundingClientRect(),r=e.getBoundingClientRect();return {rowHeight:r.height,buttonHeight:b.height,flexBasis:getComputedStyle(e).flexBasis,buttonWidth:b.width}});
+        assert.equal(bounds.flexBasis,'auto');assert.equal(bounds.buttonHeight,32);
+        assert.ok(bounds.rowHeight<=44&&bounds.buttonWidth<200,JSON.stringify(bounds));
+      }
+      await entries.setViewportSize({width:390,height:844});
+      await entries.screenshot({path:path.join(out,'preset-entry-column-390.png'),fullPage:true});
+    });
+    await entries.close();
     const cancelNew = await fresh();
     await check('取消新增不留下空条目，完成新增可以撤销', async () => {
       const l = cancelNew.locator('.prw-column').first();

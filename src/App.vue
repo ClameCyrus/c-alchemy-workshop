@@ -642,7 +642,7 @@ onBeforeUnmount(() => {
     <section class="prw-window" role="dialog" aria-modal="true" aria-label="Cの炼金工坊">
       <header class="prw-header">
         <div class="brand">
-          <span class="brand-icon">▥</span><strong class="prw-brand-name">Cの炼金工坊</strong><small>0.1.0</small
+          <i class="brand-icon fa-solid fa-flask" aria-hidden="true"></i><strong class="prw-brand-name">Cの炼金工坊</strong><small>0.1.0</small
           ><small v-if="host.demo" class="demo-badge">演示</small>
         </div>
         <div class="header-actions">

@@ -35,16 +35,15 @@ function init() {
     wand.append(container);
     buttons.push(container);
   }
-  for (const [selector, kind] of [
-    ['#openai_api-presets', 'preset'],
-    ['#regex_container', 'regex'],
-  ] as const) {
-    const parent = document.querySelector(selector);
-    if (!parent) continue;
+  const presetParent = document.querySelector('#openai_api-presets');
+  if (presetParent) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'menu_button prw-open-button';
-    button.append('▥ ');
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-flask';
+    icon.setAttribute('aria-hidden', 'true');
+    button.append(icon);
     const name = document.createElement('span');
     name.className = 'prw-brand-name';
     name.textContent = 'Cの炼金工坊';
@@ -52,12 +51,13 @@ function init() {
     button.title = 'Cの炼金工坊';
     button.addEventListener('click', event => {
       event.stopPropagation();
-      open({ kind });
+      open({ kind: 'preset' });
     });
     const row = document.createElement('div');
+    row.id = 'prw-preset-entry';
     row.className = 'prw-entry-row';
     row.append(button);
-    selector === '#regex_container' ? parent.prepend(row) : parent.append(row);
+    presetParent.append(row);
     buttons.push(row);
   }
   const cleanMenus = installNativeMenus(host, open, ref => {
