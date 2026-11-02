@@ -9,6 +9,7 @@ const View = z.object({
 }).prefault({});
 const Color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const Preferences = z.object({
+  grouping: z.boolean().default(true),
   kind: z.enum(['preset', 'regex']).default('preset'),
   operation: z.enum(['browse', 'drag', 'insert']).default('browse'),
   transfer: z.enum(['copy', 'move']).default('copy'),
@@ -23,6 +24,10 @@ const Preferences = z.object({
 }).prefault({});
 export type PreferencesState = z.infer<typeof Preferences>;
 const KEY = 'c-alchemy-workshop:ui:v1';
+export function groupingEnabled() {
+  try { return JSON.parse(localStorage.getItem(KEY) || '{}').grouping !== false; }
+  catch { return true; }
+}
 export function readPreferences(): PreferencesState {
   try { return Preferences.parse(JSON.parse(localStorage.getItem(KEY) || '{}')); }
   catch { return Preferences.parse({}); }
@@ -32,9 +37,11 @@ export function writePreferences(value: PreferencesState) {
   catch (error) { console.warn('[Cの炼金工坊] 无法保存界面偏好', error); }
 }
 export function applyAppearance(value: PreferencesState['appearance']) {
+  const surface = document.getElementById('prw-mount');
   for (const [field, token] of Object.entries({ background: 'bg', text: 'text', muted: 'muted', accent: 'accent', border: 'border' })) {
     const key = `--prw-${token}`;
-    if (value.mode === 'custom') document.documentElement.style.setProperty(key, value[field as keyof typeof value]);
-    else document.documentElement.style.removeProperty(key);
+    document.documentElement.style.removeProperty(key);
+    if (value.mode === 'custom') surface?.style.setProperty(key, value[field as keyof typeof value]);
+    else surface?.style.removeProperty(key);
   }
 }

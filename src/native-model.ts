@@ -17,5 +17,6 @@ export function nativeModel(ref: Resource, snapshot: Snapshot): NativeModel | un
       });
     })();
   if (new Set(entries.map(e => e.id)).size !== entries.length) throw new Error('原生列表含重复ID，已停止分组接管');
-  return { ref, entries, groups: normalizeGroups(own.groups || [], entries.map(e => e.id)) };
+  const groups = normalizeGroups(own.groups || [], entries.map(e => e.id)).filter(g => g.members.length);
+  return groups.length ? { ref, entries, groups } : undefined;
 }

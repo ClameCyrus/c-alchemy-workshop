@@ -537,6 +537,7 @@ test('原生执行适配器覆盖三类正则和提示词，不修改原开关�
   baiGet.__baiBaiToolkitOriginalGetPromptCollection=baseGet;baiDisabled.__baiBaiToolkitOriginalIsPromptDisabledForActiveCharacter=baseDisabled;
   const pm={getPromptCollection:baiGet,isPromptDisabledForActiveCharacter:baiDisabled};
   global.window={SillyTavern:{getContext:()=>c}};global.document=dom;
+  let grouping=true;global.localStorage={getItem:()=>JSON.stringify({grouping})};
   const stop=installGroupRuntime(async path=>path.includes('engine.js')?{SCRIPT_TYPES:{GLOBAL:0,PRESET:1,SCOPED:2},getScriptsByType:type=>arrays[type]}:{promptManager:pm});
   try {
     await new Promise(resolve=>setImmediate(resolve));
@@ -545,13 +546,18 @@ test('原生执行适配器覆盖三类正则和提示词，不修改原开关�
     assert.deepEqual(pm.getPromptCollection().collection.map(p=>p.identifier),['unblocked']);
     assert.equal(pm.isPromptDisabledForActiveCharacter('a'),true);assert.equal(pm.isPromptDisabledForActiveCharacter('unblocked'),false);
     assert.equal(pm.isPromptDisabledForActiveCharacter('already-disabled'),true);
+    grouping=false;dom.dispatchEvent(new Event('prw:grouping-preference'));await new Promise(resolve=>setImmediate(resolve));
+    for(const rows of arrays)assert.equal(typeof Object.getOwnPropertyDescriptor(rows[0],'disabled').get,'undefined');
+    assert.deepEqual(pm.getPromptCollection().collection,[]); // Restore the other plugin's own behavior.
+    grouping=true;dom.dispatchEvent(new Event('prw:grouping-preference'));await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(pm.getPromptCollection().collection.map(p=>p.identifier),['unblocked']);
     settings.extensions[ns].promptGroups.groups[0].enabled=true;
     c.extensionSettings[ns].regexScopes.global.groups[0].enabled=true;
     bus.emit('settings');await new Promise(resolve=>setImmediate(resolve));
     assert.deepEqual(pm.getPromptCollection().collection.map(p=>p.identifier),['a','unblocked']);
     assert.equal(typeof Object.getOwnPropertyDescriptor(arrays[0][0],'disabled').get,'undefined');
     assert.deepEqual(clone(arrays),before);
-  } finally {stop();delete global.window;delete global.document;}
+  } finally {stop();delete global.window;delete global.document;delete global.localStorage;}
   assert.equal(pm.getPromptCollection,baiGet);assert.equal(pm.isPromptDisabledForActiveCharacter,baiDisabled);
   assert.equal(bus.listenerCount('settings'),0);
   for(const rows of arrays)assert.equal(typeof Object.getOwnPropertyDescriptor(rows[0],'disabled').get,'undefined');
@@ -575,4 +581,67 @@ test('分组采用只保存当前资源，失败保留草稿，跨资源移动�
   assert.equal(await store.save(b.key),false);assert.equal(h.data[a.key].raw.length,1);
   assert.equal(await store.save(),true);assert.equal(h.data[a.key].raw.length,0);assert.equal(h.data[b.key].raw.length,2);
   } finally {store.$dispose();delete global.localStorage;}
+});
+
+test('相似匹配按词序和有效覆盖判断，不把短公共句与同名条目误判', () => {
+  const entry=(id,text)=>entryFrom(prompt(id,text,'相同名称'),'preset');
+  const common='when writing please pay attention to the following instructions';
+  const novel='Write an immersive character driven novel. Describe motivations through concrete choices and consequences. Keep independent relationships believable while the narrator follows the protagonist across the city. ';
+  const layout='Render an interactive panel with accessible controls. Configure the background color and contrast ratio. Resize the canvas to match the screen dimensions before updating animated visual effects. ';
+  assert.equal(matchEntries(entry('same',novel.repeat(12)+common),entry('same',layout.repeat(12)+common)),null);
+  assert.equal(matchEntries(entry('a','the quick brown fox'),entry('b','the quick brown cat')),null);
+  assert.equal(matchEntries(entry('a','只有这一小句'),entry('b','只有这一小句'))?.type,'exact');
+  const block='Along the river the old librarian carried a wooden box containing several handwritten letters from a childhood friend who had moved into the distant northern mountains many years before the storm.';
+  assert.equal(matchEntries(entry('a',novel+block),entry('b',layout+block))?.type,'partial');
+  assert.equal(matchEntries(entry('a',novel+block),entry('b',(novel+block).split(' ').map((word,i)=>i%12===5?'revised':word).join(' ')))?.type,'similar');
+});
+
+test('没有实际成员的分组不接管原生列表',()=>{
+  const r=ref('A');
+  for(const groups of [[],[{id:'empty',name:'空组',members:[],enabled:true,collapsed:false}],[{id:'stale',members:['missing']}]] )
+    assert.equal(nativeModel(r,{raw:preset([prompt('a')]),own:{version:1,native:true,groups}}),undefined);
+});
+
+test('原生组暂停只写元数据，保留行对象与开关；保存失败恢复组状态',async()=>{
+  const ns=core.NS,state=()=>({version:1,native:true,groups:[{id:'g',name:'组',members:['a'],enabled:true}],sync:['baibai'],suppressed:[]});
+  const live=preset([prompt('a')]);live.extensions[ns]={promptGroups:state(),regexGroups:state()};
+  live.extensions.baibaiToolkit={presetPromptGroups:state()};live.extensions.regex_scripts=[regex('a')];
+  const c={extensionSettings:{regex:[regex('a')],[ns]:{regexScopes:{global:state()}}},characters:[{avatar:'c.png',name:'角色',data:{extensions:{regex_scripts:[regex('a')],[ns]:{regexGroups:state()}}}}],characterId:0};
+  c.getPresetManager=()=>({getPresetList:()=>({preset_names:{A:0},settings:live}),getSelectedPresetName:()=>'A',getCompletionPresetByName:()=>live});
+  let writes=0,fail=false;
+  c.writeExtensionField=async(id,key,value)=>{writes++;c.characters[id].data.extensions[key]=clone(value)};
+  const host=new NativeHost(async()=>({saveSettings:async()=>{writes++;if(fail){fail=false;throw Error('模拟断网')}}}));
+  global.window={SillyTavern:{getContext:()=>c}};global.document=new EventTarget();
+  const regexes=[c.extensionSettings.regex,c.characters[0].data.extensions.regex_scripts,live.extensions.regex_scripts],objects=regexes.map(r=>r[0]),before=clone(regexes),prompts=live.prompts;
+  try {
+    const refs=[...host.resources('regex').filter(r=>r.scope!=='preset'||r.live),host.resources('preset').find(r=>r.live)];
+    for(const r of refs){assert.equal(await host.setGroupEnabled(r,'g',false),true);assert.equal((await host.load(r)).own.groups[0].enabled,false)}
+    assert.equal(writes,4);assert.deepEqual(clone(regexes),before);assert.equal(live.prompts,prompts);
+    regexes.forEach((r,i)=>assert.equal(r[0],objects[i]));
+    assert.equal(live.extensions.baibaiToolkit.presetPromptGroups.groups[0].enabled,false);
+    const r=refs.find(r=>r.scope==='global');fail=true;
+    await assert.rejects(()=>host.setGroupEnabled(r,'g',true),/模拟断网/);
+    assert.equal(c.extensionSettings[ns].regexScopes.global.groups[0].enabled,false);
+    assert.equal(writes,6);assert.deepEqual(clone(regexes),before);
+  } finally {delete global.window;delete global.document}
+});
+
+test('快速切换资源时迟到的读取不会覆盖新选择',async()=>{
+  global.localStorage={getItem:()=>null,setItem:()=>{}};
+  setActivePinia(createPinia());const state=useWorkbench(),a=ref('A'),b=ref('B');
+  const pending={};state.init({resources:()=>[a,b],load:r=>new Promise(resolve=>pending[r.key]=resolve),commit:async()=>{},refresh:async()=>{}});
+  try {
+    const first=state.load('left',a.key),second=state.load('left',b.key);
+    assert.equal(state.keys.left,b.key);
+    pending[b.key]({raw:preset([prompt('b')])});await second;
+    pending[a.key]({raw:preset([prompt('a')])});await first;
+    assert.equal(state.keys.left,b.key);assert.equal(state.docs.left.entries[0].id,'b');
+  } finally {state.$dispose();delete global.localStorage;}
+});
+
+test('柏宝箱折叠组只保留原生挂载，不改折叠记录，退出恢复挂载状态',()=>{
+  const {retainNativeBodies}=require('../src/native-bodies.ts');
+  const root={id:'completion_prompt_manager_list'},state={items:[{type:'group',groupId:'a',collapsed:true},{type:'group',groupId:'b',collapsed:false},{type:'global-library',groupId:'library',collapsed:true}],mountedGroupBodies:{b:true}};
+  global.window={__baiBaiToolkitExtensionInstalled:{__baiBaiToolkitPresetVueListManager:{root,state,groupBodyUnmountTimers:new Map()}}};
+  try{const keep=retainNativeBodies(root),before=clone(state.items);keep.sync();assert.deepEqual(state.mountedGroupBodies,{a:true,b:true});assert.deepEqual(state.items,before);keep.sync();keep.restore();assert.deepEqual(state.mountedGroupBodies,{b:true});assert.deepEqual(state.items,before)}finally{delete global.window}
 });

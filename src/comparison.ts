@@ -19,7 +19,7 @@ export function useComparison(read: () => Input, signature: (entry: Entry) => st
   const pause = () => new Promise<void>(resolve => setTimeout(resolve, 0));
   watch(() => {
     const input = read();
-    const left = entries(input.left, input.unused), right = entries(input.right, input.unused);
+    const left = input.enabled ? entries(input.left, input.unused) : [], right = input.enabled ? entries(input.right, input.unused) : [];
     return { ...input, leftRows: left, rightRows: right,
       fingerprint: [...left, ...right].map(signature).join('\0') };
   }, async input => {

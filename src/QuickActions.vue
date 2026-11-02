@@ -2,12 +2,16 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { clone, rangeMembers } from './core';
 import { QuickOperations, sameResource } from './quick-operations';
+import { groupingEnabled } from './preferences';
 import type { GroupChoice, QuickSource } from './quick-operations';
 import type { Host, Resource, WorkDocument } from './types';
 
 const props = defineProps<{ host: Host; guard: (ref: Resource) => void; changed: (refs: Resource[]) => void }>();
 const operations = new QuickOperations(props.host, props.guard, props.changed);
 const stage = ref<'' | 'targets' | 'groups' | 'name' | 'confirm' | 'error'>('');
+const grouping = ref(groupingEnabled());
+const groupingPreference = () => { grouping.value = groupingEnabled(); if (!grouping.value) reset(); };
+document.addEventListener('prw:grouping-preference', groupingPreference);
 const dialog = ref<HTMLDialogElement>();
 const busy = ref(false), message = ref(''), notice = ref(''), query = ref('');
 const action = ref<'copy' | 'move'>('copy');
@@ -56,7 +60,7 @@ async function run(fn: () => Promise<unknown>, text: string, clearSelection = fa
         if (checkbox?.checked) { checkbox.checked = false; checkbox.dispatchEvent(new Event('change', { bubbles: true })); }
       });
     }
-    toast(text);
+    if (text) toast(text);
   } catch (error) {
     message.value = error instanceof Error ? error.message : String(error);
     await show('error');
@@ -115,10 +119,9 @@ async function finishErase() {
   const item = destructive.value;
   if (item) await run(() => operations.erase(item.ref, [item.id], item.detach), item.detach ? '已移出列表' : '已删除');
 }
-onBeforeUnmount(() => { clearTimeout(timer); clearRange(); });
+onBeforeUnmount(() => { clearTimeout(timer); clearRange(); document.removeEventListener('prw:grouping-preference', groupingPreference); });
 defineExpose({ transfer, group, erase, reset,
-  collapse: (ref: Resource, id: string) => run(() => operations.collapse(ref, id), '已更新分组'),
-  groupEnabled: (ref: Resource, id: string, enabled: boolean) => run(() => operations.groupEnabled(ref, id, enabled), enabled ? '已启用本组' : '已暂停本组'),
+  groupEnabled: (ref: Resource, id: string, enabled: boolean) => run(() => operations.groupEnabled(ref, id, enabled), ''),
   entryEnabled: (ref: Resource, id: string, enabled: boolean) => run(() => operations.entryEnabled(ref, id, enabled), '已更新条目开关'),
   fail: async (error: unknown) => { message.value = String(error instanceof Error ? error.message : error); await show('error'); },
   isRange: (ref: Resource) => !!pending.value && sameResource(pending.value.ref, ref) });
@@ -138,7 +141,7 @@ defineExpose({ transfer, group, erase, reset,
       <div class="quick-list">
         <div v-for="ref in filteredTargets" :key="ref.key" class="quick-target">
           <button :disabled="busy" @click="execute(ref)">{{ ref.label }}</button>
-          <button :disabled="busy" :aria-label="`选择${ref.label}分组`" title="选择分组" @click="groups(ref)">›</button>
+          <button v-if="grouping" :disabled="busy" :aria-label="`选择${ref.label}分组`" title="选择分组" @click="groups(ref)">›</button>
         </div>
       </div>
     </template>

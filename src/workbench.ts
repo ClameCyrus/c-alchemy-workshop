@@ -7,7 +7,10 @@ import type { Host, Kind, Resource, Side, WorkDocument } from './types';
 
 export const useWorkbench = defineStore('preset-regex-workbench', () => {
   const preferences = reactive(readPreferences());
-  watch(preferences, () => writePreferences(preferences), { deep: true });
+  watch(preferences, () => writePreferences(preferences), { deep: true, flush: 'sync' });
+  watch(() => preferences.grouping, () => {
+    if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:grouping-preference'));
+  });
   const documents = reactive<Record<string, WorkDocument>>({});
   const kind = ref<Kind>(preferences.kind);
   const keys = reactive({ left: preferences.views[kind.value].left, right: preferences.views[kind.value].right });
@@ -29,6 +32,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     future = ref<string[]>([]);
   const saveOrder = ref<string[]>([]);
   let host: Host;
+  const requests = { left: 0, right: 0 };
   const dirty = computed(() => Object.values(documents).filter(d => d.dirty));
   const docs = computed(() => ({ left: documents[keys.left], right: documents[keys.right] }));
   function init(value: Host) {
@@ -36,6 +40,9 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     resources.value = host.resources(kind.value);
   }
   async function load(side: Side, key: string) {
+    const ticket = ++requests[side], requestedKind = kind.value;
+    anchor.value = null;
+    keys[side] = key;
     try {
       const resource = resources.value.find(r => r.key === key);
       if (!resource) {
@@ -43,16 +50,22 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
         preferences.views[kind.value][side] = '';
         return;
       }
-      if (!documents[key] || !documents[key].dirty) documents[key] = makeDocument(resource, await host.load(resource));
+      if (!documents[key] || !documents[key].dirty) {
+        const snapshot = await host.load(resource);
+        if (ticket !== requests[side] || requestedKind !== kind.value) return;
+        if (!documents[key]?.dirty) documents[key] = makeDocument(resource, snapshot);
+      }
       keys[side] = key;
       preferences.views[kind.value][side] = key;
       error.value = '';
     } catch (e) {
+      if (ticket !== requests[side] || requestedKind !== kind.value) return;
       error.value = String(e instanceof Error ? e.message : e);
     }
   }
   async function switchKind(value: Kind) {
     if (kind.value === value) return;
+    requests.left++; requests.right++;
     kind.value = value;
     preferences.kind = value;
     resources.value = host.resources(value);

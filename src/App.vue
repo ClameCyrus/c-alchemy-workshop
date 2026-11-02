@@ -20,6 +20,7 @@ import {
 import { useWorkbench } from './workbench';
 import { applyAppearance } from './preferences';
 import { useComparison } from './comparison';
+import TextCompare from './TextCompare.vue';
 import type { Entry, Host, Match, OpenRequest, Provider, Side, WorkDocument } from './types';
 
 const props = defineProps<{ host: Host }>();
@@ -78,14 +79,21 @@ const confirmBox = ref<{
   resolve: (value: string | boolean | null) => void;
 } | null>(null);
 const menu = ref<{ key: string; id: string } | null>(null);
-const detail = ref<{ key: string; id: string } | null>(null);
+const picked = ref<Record<Side, string>>({ left: '', right: '' });
+const readerOpen = ref(false), readerPage = ref<Side>('left');
+const pickedEntries = computed(() => Object.fromEntries((['left', 'right'] as Side[]).map(side =>
+  [side, [...(docs.value[side]?.entries || []), ...(docs.value[side]?.unused || [])].find(e => e.id === picked.value[side])],
+)) as Record<Side, Entry | undefined>);
+function clearComparison() {
+  anchor.value = null; picked.value = { left: '', right: '' }; readerOpen.value = false;
+}
 const savedScroll: Record<string, number> = {};
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 const sideNames = computed(() => ({
   left: docs.value.left?.ref.label || '选择预设',
   right: docs.value.right?.ref.label || '选择预设',
 }));
-const anchorDoc = computed(() => (anchor.value ? state.documents[anchor.value.key] : undefined));
+const anchorDoc = computed(() => (anchor.value && [keys.value.left, keys.value.right].includes(anchor.value.key) ? state.documents[anchor.value.key] : undefined));
 const anchorEntry = computed(
   () => anchorDoc.value && [...anchorDoc.value.entries, ...anchorDoc.value.unused].find(e => e.id === anchor.value?.id),
 );
@@ -171,7 +179,7 @@ const lists = computed(() => {
       if (query && !searchable(entry).includes(query)) return false;
       const group = groupOf(doc, entry.id);
       if (
-        group?.collapsed &&
+        state.preferences.grouping && group?.collapsed &&
         !query &&
         !groupFilter.value[side] &&
         !rangeStart.value &&
@@ -179,7 +187,7 @@ const lists = computed(() => {
       )
         return false;
       if (
-        groupFilter.value[side] &&
+        state.preferences.grouping && groupFilter.value[side] &&
         (groupFilter.value[side] === '__ungrouped' ? !!group : group?.id !== groupFilter.value[side])
       )
         return false;
@@ -275,9 +283,12 @@ defineExpose({ open });
 function close() {
   if (edit.value || confirmBox.value || groupDialog.value || appearanceDialog.value) return;
   opened.value = false;
+  readerOpen.value = false;
+  finishDrag();
   menu.value = null;
 }
 async function pick(side: Side, key: string) {
+  clearComparison(); notice.value = ''; menu.value = null; rangeStart.value = null;
   await state.load(side, key);
   await nextTick();
   restoreScroll(side);
@@ -285,6 +296,7 @@ async function pick(side: Side, key: string) {
 async function reload(doc: WorkDocument) {
   if (doc.dirty && !(await ask('重新载入', `${doc.ref.label}\n放弃这份未保存修改？`, true))) return;
   try {
+    clearComparison();
     state.documents[doc.ref.key] = makeDocument(doc.ref, await props.host.load(doc.ref));
     state.history = [];
     state.future = [];
@@ -320,6 +332,7 @@ function allSelect(side: Side) {
   transferSource.value = doc.ref.key;
 }
 async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
+  if ((operation.value === 'drag' && !rangeStart.value) || performance.now() < suppressClickUntil) return;
   if (rangeStart.value) {
     if (rangeStart.value.key !== doc.ref.key) {
       notice.value = '在同一份列表里选终点';
@@ -348,7 +361,9 @@ async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
     notice.value = '已分组';
     return;
   }
-  detail.value = { key: doc.ref.key, id: entry.id };
+  picked.value[side] = entry.id;
+  readerPage.value = side;
+  readerOpen.value = !dual.value || !!(pickedEntries.value.left && pickedEntries.value.right);
   if (!anchor.value || anchor.value.key === doc.ref.key) anchor.value = { key: doc.ref.key, id: entry.id };
 }
 async function erase(doc: WorkDocument, ids: string[], detach = false) {
@@ -393,27 +408,63 @@ function insert(doc: WorkDocument, id?: string, after = false, groupId?: string)
     groupId,
   );
 }
+let dragBlocked = false, suppressClickUntil = 0, scrollFrame = 0;
+let scrollList: HTMLElement | null = null, scrollDelta = 0;
+const dragSource = ref<{ key: string; ids: string[] } | null>(null);
+const dropTarget = ref<{ key: string; id?: string; after: boolean; groupId?: string } | null>(null);
+function finishDrag() {
+  if (dragSource.value) suppressClickUntil = performance.now() + 250;
+  dragSource.value = null; dropTarget.value = null; dragBlocked = false;
+  cancelAnimationFrame(scrollFrame); scrollFrame = 0; scrollList = null; scrollDelta = 0;
+}
+function scrollDrag() {
+  if (!dragSource.value || !scrollList || !scrollDelta) { scrollFrame = 0; return; }
+  scrollList.scrollTop += scrollDelta; scrollFrame = requestAnimationFrame(scrollDrag);
+}
 function dragStart(event: DragEvent, doc: WorkDocument, entry: Entry) {
-  if (operation.value !== 'drag' || protectedEntry(entry)) {
-    event.preventDefault();
-    return;
-  }
+  if (operation.value !== 'drag' || rangeStart.value || protectedEntry(entry) || dragBlocked) { event.preventDefault(); return; }
+  readerOpen.value = false;
   const ids = (selected.value[doc.ref.key] || []).includes(entry.id) ? selected.value[doc.ref.key] : [entry.id];
-  selected.value[doc.ref.key] = [...ids];
-  transferSource.value = doc.ref.key;
-  event.dataTransfer?.setData('application/x-prw', JSON.stringify({ key: doc.ref.key, ids }));
+  selected.value[doc.ref.key] = [...ids]; transferSource.value = doc.ref.key;
+  dragSource.value = { key: doc.ref.key, ids: [...ids] };
+  event.dataTransfer?.setData('application/x-prw', JSON.stringify(dragSource.value));
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
+}
+function dragOver(event: DragEvent, doc: WorkDocument, id?: string, groupId?: string) {
+  if (operation.value !== 'drag' || !dragSource.value) return;
+  event.preventDefault();
+  const element = event.currentTarget as HTMLElement, rect = element.getBoundingClientRect();
+  const after = !!id && event.clientY >= rect.top + rect.height / 2;
+  const old = dropTarget.value;
+  if (!old || old.key !== doc.ref.key || old.id !== id || old.after !== after || old.groupId !== groupId)
+    dropTarget.value = { key: doc.ref.key, id, after, groupId };
+  if (event.dataTransfer) event.dataTransfer.dropEffect = transferAction.value;
+  scrollList = element.closest('.entry-list');
+  if (scrollList) {
+    const bounds = scrollList.getBoundingClientRect();
+    scrollDelta = event.clientY < bounds.top + 45 ? -12 : event.clientY > bounds.bottom - 45 ? 12 : 0;
+    if (scrollDelta && !scrollFrame) scrollFrame = requestAnimationFrame(scrollDrag);
+  }
+}
+function leaveDrop(event: DragEvent) {
+  // dragenter of the new card can arrive before dragleave of the previous one.
+  if (document.elementFromPoint(event.clientX, event.clientY)?.closest('#prw-panel .entry-list')) return;
+  const rect = (event.currentTarget as Element).getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+    dropTarget.value = null; scrollDelta = 0;
+  }
 }
 function drop(event: DragEvent, doc: WorkDocument, id?: string, after = false, groupId?: string) {
   if (operation.value !== 'drag') return;
   event.preventDefault();
+  const position = dropTarget.value;
+  if (position?.key === doc.ref.key && position.id === id && position.groupId === groupId) after = position.after;
+  else if (id) { const r = (event.currentTarget as HTMLElement).getBoundingClientRect(); after = event.clientY >= r.top + r.height / 2; }
   try {
-    const value = JSON.parse(event.dataTransfer?.getData('application/x-prw') || '{}');
-    if (Array.isArray(value.ids) && state.documents[value.key])
-      state.transfer(value.key, doc.ref.key, value.ids, id, after, groupId);
-  } catch {
-    error.value = '拖动已取消';
-  }
+    const value = dragSource.value || JSON.parse(event.dataTransfer?.getData('application/x-prw') || '{}');
+    if (Array.isArray(value.ids) && state.documents[value.key]) state.transfer(value.key, doc.ref.key, value.ids, id, after, groupId);
+  } catch { error.value = '拖动已取消'; }
+  finally { finishDrag(); }
 }
 function saveEdit() {
   if (!edit.value) return;
@@ -556,50 +607,40 @@ function download(doc: WorkDocument, entries?: Entry[]) {
 }
 const groupDocument = computed(() => (groupDialog.value ? state.documents[groupDialog.value] : undefined));
 const editDocument = computed(() => (edit.value ? state.documents[edit.value.docKey] : undefined));
-const detailEntry = computed(() =>
-  detail.value
-    ? [
-        ...(state.documents[detail.value.key]?.entries || []),
-        ...(state.documents[detail.value.key]?.unused || []),
-      ].find(e => e.id === detail.value?.id)
-    : undefined,
-);
-const diffParts = computed(() => {
-  if (!detailEntry.value || !anchorEntry.value || detail.value?.key === anchor.value?.key) return null;
-  const Diff = window.SillyTavern?.libs?.DiffMatchPatch;
-  if (!Diff) return null;
-  const diff = new Diff(),
-    parts = diff.diff_main(anchorEntry.value.content, detailEntry.value.content);
-  diff.diff_cleanupSemantic(parts);
-  return parts as [number, string][];
-});
+function editPicked(side: Side) {
+  const entry = pickedEntries.value[side], doc = docs.value[side];
+  if (entry && doc) { readerOpen.value = false; edit.value = { docKey: doc.ref.key, value: clone(entry) }; }
+}
+watch(() => [kind.value, keys.value.left, keys.value.right], () => {
+  clearComparison(); finishDrag(); notice.value = ''; menu.value = null; rangeStart.value = null;
+}, { flush: 'sync' });
+watch(pickedEntries, entries => { if (readerOpen.value && (!entries.left || (dual.value && !entries.right))) readerOpen.value = false; });
 watch(filter, value => {
   if (value === 'only-left' || value === 'only-right') {
-    anchor.value = null;
-    detail.value = null;
+    clearComparison();
     page(value === 'only-left' ? 'left' : 'right');
   }
 });
 watch(dual, value => {
   if (!value) {
     filter.value = 'all';
-    anchor.value = null;
-    detail.value = null;
+    clearComparison();
     activePage.value = 'left';
   }
 });
 watch(kind, () => {
-  detail.value = null;
+  clearComparison();
   menu.value = null;
   clearTimeout(searchTimer);
   searchQuery.value = { ...search.value };
 });
+watch(() => state.preferences.grouping, enabled => { if (!enabled) { rangeStart.value = null; groupDialog.value = null; menu.value = null; } });
 watch(operation, value => {
+  finishDrag();
   rangeStart.value = null;
   menu.value = null;
   if (value !== 'browse') {
-    anchor.value = null;
-    detail.value = null;
+    clearComparison();
   }
 });
 watch(chosenProvider, value => {
@@ -619,6 +660,8 @@ watch(notice, () => {
 });
 function keydown(e: KeyboardEvent) {
   if (e.key !== 'Escape') return;
+  if (readerOpen.value) { readerOpen.value = false; return; }
+  if (dragSource.value) { finishDrag(); return; }
   if (confirmBox.value) finishConfirm(false);
   else if (edit.value) edit.value = null;
   else if (groupDialog.value) groupDialog.value = null;
@@ -636,6 +679,7 @@ function beforeUnload(event: BeforeUnloadEvent) {
 window.addEventListener('keydown', keydown);
 window.addEventListener('beforeunload', beforeUnload);
 onBeforeUnmount(() => {
+  finishDrag();
   window.removeEventListener('keydown', keydown);
   window.removeEventListener('beforeunload', beforeUnload);
   clearTimeout(noticeTimer);
@@ -652,7 +696,7 @@ onBeforeUnmount(() => {
           ><small v-if="host.demo" class="demo-badge">演示</small>
         </div>
         <div class="header-actions">
-          <button aria-label="外观" title="外观" @click="appearanceDialog = true">◐</button>
+          <button aria-label="设置" title="设置" @click="appearanceDialog = true">◐</button>
           <button class="history-action" :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button
           ><button class="history-action" :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button
           ><button class="primary" :disabled="!dirty.length || busy" @click="state.save()">
@@ -727,10 +771,7 @@ onBeforeUnmount(() => {
           ><button
             aria-label="清除对比基准"
             title="清除对比基准"
-            @click="
-              anchor = null;
-              detail = null;
-            "
+            @click="clearComparison"
           >
             ✕
           </button>
@@ -763,7 +804,7 @@ onBeforeUnmount(() => {
               <option value="">选择{{ kind === 'regex' ? '范围' : '预设' }}</option>
               <option v-for="r in resources" :key="r.key" :value="r.key">{{ r.label }}</option></select
             ><button v-if="docs[side]" aria-label="重新载入" title="重新载入" @click="reload(docs[side])">↻</button
-            ><button v-if="docs[side]" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
+            ><button v-if="state.preferences.grouping && docs[side]" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
             ><button v-if="docs[side]" aria-label="导出备份" title="导出备份" @click="download(docs[side])">⇩</button>
           </div>
           <template v-if="docs[side]">
@@ -773,7 +814,7 @@ onBeforeUnmount(() => {
                 type="search"
                 placeholder="搜索名称或正文"
                 :aria-label="`${sideNames[side]} 搜索`"
-              /><select v-model="groupFilter[side]" aria-label="分组筛选">
+              /><select v-if="state.preferences.grouping && docs[side].state.groups.length" v-model="groupFilter[side]" aria-label="分组筛选">
                 <option value="">所有分组</option>
                 <option value="__ungrouped">未分组</option>
                 <option v-for="g in docs[side].state.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
@@ -790,22 +831,27 @@ onBeforeUnmount(() => {
                 取消选择</button
               ><button aria-label="添加条目" title="添加条目" @click="createEntry(docs[side])">＋</button>
             </div>
-            <div v-if="!docs[side].snapshot.own && docs[side].sources.length" class="group-notice">
+            <div v-if="state.preferences.grouping && !docs[side].snapshot.own && docs[side].sources.length" class="group-notice">
               <button @click="openGroups(docs[side])">选择分组方案 · {{ docs[side].sources.length }}</button>
             </div>
             <div
               class="entry-list"
               :data-list="side"
               @scroll="savedScroll[keys[side]] = ($event.target as HTMLElement).scrollTop"
-              @dragover="operation === 'drag' && $event.preventDefault()"
+              :class="{'drop-end':dropTarget?.key === docs[side].ref.key && !dropTarget.id && !dropTarget.groupId}"
+              @dragover.self="dragOver($event, docs[side])"
+              @dragenter.self="dragOver($event, docs[side])"
+              @dragleave="leaveDrop($event)"
               @drop.self="drop($event, docs[side])"
             >
-              <div v-if="docs[side].state.groups.length" class="group-chips">
+              <div v-if="state.preferences.grouping && docs[side].state.groups.length" class="group-chips">
                 <div
                   v-for="g in docs[side].state.groups"
                   :key="g.id"
                   class="group-chip"
-                  @dragover="operation === 'drag' && $event.preventDefault()"
+                  :class="{'drop-group':dropTarget?.key === docs[side].ref.key && dropTarget.groupId === g.id}"
+                  @dragover.stop="dragOver($event, docs[side], undefined, g.id)"
+                  @dragenter.stop="dragOver($event, docs[side], undefined, g.id)"
                   @drop.stop="drop($event, docs[side], undefined, false, g.id)"
                 >
                   <button
@@ -843,21 +889,22 @@ onBeforeUnmount(() => {
                 :class="[
                   {
                     selected: selected[docs[side].ref.key]?.includes(entry.id),
-                    anchor: anchor?.key === docs[side].ref.key && anchor.id === entry.id,
+                    anchor: picked[side] === entry.id,
+                    'drop-before': dropTarget?.key === docs[side].ref.key && dropTarget.id === entry.id && !dropTarget.after,
+                    'drop-after': dropTarget?.key === docs[side].ref.key && dropTarget.id === entry.id && dropTarget.after,
                     disabled: !entry.enabled,
                   },
                   matchFor(docs[side], entry)?.type,
                 ]"
                 :data-entry-id="entry.id"
-                @dragover="operation === 'drag' && $event.preventDefault()"
-                @drop.stop="
-                  drop(
-                    $event,
-                    docs[side],
-                    entry.id,
-                    $event.offsetY > ($event.currentTarget as HTMLElement).clientHeight / 2,
-                  )
-                "
+                :draggable="operation === 'drag' && !rangeStart && !protectedEntry(entry)"
+                @pointerdown.capture="dragBlocked = !!($event.target as Element).closest('button,input,select,textarea,summary,details,a')"
+                @dragstart="dragStart($event, docs[side], entry)"
+                @dragend="finishDrag"
+                @dragover.stop="dragOver($event, docs[side], entry.id)"
+                @dragenter.stop="dragOver($event, docs[side], entry.id)"
+                @dragleave="leaveDrop($event)"
+                @drop.stop="drop($event, docs[side], entry.id)"
                 @click="selectEntry(docs[side], entry, side)"
               >
                 <div class="entry-top">
@@ -871,10 +918,8 @@ onBeforeUnmount(() => {
                   /><span
                     v-if="operation === 'drag'"
                     class="drag-handle"
-                    :draggable="!protectedEntry(entry)"
                     title="拖动"
                     @click.stop
-                    @dragstart="dragStart($event, docs[side], entry)"
                     >⠿</span
                   ><strong :title="entry.name">{{ entry.name }}</strong
                   ><span v-if="entry.unused" class="tag">未加入</span
@@ -928,6 +973,7 @@ onBeforeUnmount(() => {
                   ><button :disabled="protectedEntry(entry)" @click="beginTransfer(docs[side], entry, 'move')">
                     移动到…</button
                   ><button
+                    v-if="state.preferences.grouping"
                     :disabled="entry.unused"
                     @click="
                       rangeStart = { key: docs[side].ref.key, id: entry.id };
@@ -936,6 +982,7 @@ onBeforeUnmount(() => {
                   >
                     从这里分组</button
                   ><select
+                    v-if="state.preferences.grouping && docs[side].state.groups.length"
                     aria-label="加入分组"
                     :value="groupOf(docs[side], entry.id)?.id || ''"
                     @change="
@@ -991,17 +1038,7 @@ onBeforeUnmount(() => {
           <div v-else class="empty-state">选择后开始</div>
         </section>
       </main>
-      <aside v-if="detailEntry && !rangeStart" class="detail-strip">
-        <div>
-          <strong>{{ detailEntry.name }}</strong
-          ><button title="编辑" @click="edit = { docKey: detail!.key, value: clone(detailEntry) }">编辑</button
-          ><button aria-label="关闭详情" title="关闭详情" @click="detail = null">✕</button>
-        </div>
-        <pre
-          v-if="diffParts"
-        ><template v-for="(part, index) in diffParts" :key="index"><mark v-if="part[0] !== 0" :class="part[0] > 0 ? 'added' : 'removed'">{{ part[1] }}</mark><span v-else>{{ part[1] }}</span></template></pre>
-        <pre v-else>{{ detailEntry.content }}</pre>
-      </aside>
+      <TextCompare v-if="readerOpen" :left="pickedEntries.left" :right="dual ? pickedEntries.right : undefined" :names="sideNames" :initial-page="readerPage" @close="readerOpen=false" @edit="editPicked" />
       <footer class="prw-footer">
         <small v-if="operation !== 'browse'"
           >{{ operation === 'drag' ? '拖动' : '插入' }} · {{ transferAction === 'copy' ? '复制' : '移动'
@@ -1144,7 +1181,8 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="appearanceDialog" class="dialog-shade" @click.self="appearanceDialog = false">
         <section class="appearance-dialog">
-          <header><strong>外观</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
+          <header><strong>设置</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
+          <label class="compact-check"><input v-model="state.preferences.grouping" type="checkbox" />启用分组功能</label>
           <select v-model="state.preferences.appearance.mode" aria-label="配色方式">
             <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
           </select>
@@ -1225,6 +1263,7 @@ onBeforeUnmount(() => {
 }
 .prw-overlay button {
   cursor: pointer;
+  margin: 0;
   padding: 6px 10px;
   line-height: 1.25;
 }
@@ -1239,6 +1278,8 @@ onBeforeUnmount(() => {
 .prw-overlay select,
 .prw-overlay textarea {
   padding: 7px 9px;
+  margin: 0;
+  line-height: 1.25;
 }
 .prw-overlay input[type='checkbox'],
 .prw-overlay input[type='radio'] {
@@ -2028,4 +2069,13 @@ onBeforeUnmount(() => {
 .mobile-history{display:none}
 @media(max-width:420px){.header-actions .history-action{display:none}.mobile-history{display:flex;gap:4px}.mobile-history button{padding:3px 6px}.brand small{display:none}.header-actions button{padding:6px}.brand strong{flex-shrink:0}}
 
+</style>
+
+<style scoped>
+.prw-toolbar>button,.prw-toolbar>select,.resource-bar>button,.resource-bar>select,.search-bar>input,.search-bar>select{height:36px;box-sizing:border-box;margin:0;align-self:center}
+.prw-toolbar>.segmented{height:36px;box-sizing:border-box;align-items:stretch}.prw-toolbar>.segmented button{margin:0;display:flex;align-items:center}
+.prw-toolbar>select{width:auto;max-width:min(360px,100%)}
+.entry[draggable=true]{cursor:grab;user-select:none}.entry[draggable=true]:active{cursor:grabbing}.entry{position:relative}
+.entry.drop-before::before,.entry.drop-after::after{content:'';position:absolute;left:0;right:0;height:4px;background:var(--prw-accent);border-radius:3px;box-shadow:0 0 0 1px var(--prw-bg);pointer-events:none;z-index:3}
+.entry.drop-before::before{top:-6px}.entry.drop-after::after{bottom:-6px}.entry-list.drop-end{box-shadow:inset 0 -4px var(--prw-accent)}.group-chip.drop-group{outline:2px solid var(--prw-accent)}
 </style>

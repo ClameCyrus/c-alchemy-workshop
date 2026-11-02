@@ -69,6 +69,7 @@ export interface Host {
   commit: (items: { doc: WorkDocument; snapshot: Snapshot }[]) => Promise<void>;
   refresh: (refs: Resource[]) => Promise<void>;
   edit?: (ref: Resource, id: string) => Promise<void | boolean>;
+  setGroupEnabled?: (ref: Resource, id: string, enabled: boolean) => Promise<boolean>;
 }
 export interface OpenRequest {
   kind?: Kind;

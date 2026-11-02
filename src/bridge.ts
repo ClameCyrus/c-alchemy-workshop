@@ -2,6 +2,7 @@ import type { Host, OpenRequest, Resource } from './types';
 import { installNativeGroupViews } from './native-groups';
 import { createQuickUI } from './quick-ui';
 import type { QuickSource } from './quick-operations';
+import { groupingEnabled } from './preferences';
 
 export function installNativeMenus(host: Host, open: (request: OpenRequest) => void, guard: (ref: Resource) => void = () => {}): () => void {
   let groups: ReturnType<typeof installNativeGroupViews> | undefined;
@@ -92,7 +93,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     add(total > 1 ? `复制 · ${total} 条` : '复制', () => quick.transfer(quickSources, 'copy', false, trigger));
     add(total > 1 ? `复制到… · ${total} 条` : '复制到…', () => quick.transfer(quickSources, 'copy', true, trigger));
     add(total > 1 ? `移动到… · ${total} 条` : '移动到…', () => quick.transfer(quickSources, 'move', true, trigger));
-    add(quick.isRange(ref) ? '设为终点' : '分组', () => quick.group(ref, id, trigger));
+    if (groupingEnabled()) add(quick.isRange(ref) ? '设为终点' : '分组', () => quick.group(ref, id, trigger));
     if (kind === 'regex' && originalRow.querySelector('.export_regex')) add('导出', original('.export_regex'));
     if (kind === 'preset') {
       if (originalRow.querySelector('[data-preset-prompt-action="favorite"]'))
@@ -171,7 +172,9 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     document.dispatchEvent(new Event('prw:runtime-sync'));
   }
   let scheduled = false;
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver(records => {
+    const own = (node: Node) => node instanceof Element && !!node.closest('.prw-native-group-header,.prw-row-more,.prw-bulk-actions,.prw-native-menu,#prw-quick-root');
+    if (records.every(r => own(r.target) || [...r.addedNodes, ...r.removedNodes].every(own))) return;
     if (scheduled) return;
     scheduled = true;
     queueMicrotask(() => {
@@ -184,10 +187,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     if (root) observer.observe(root, { subtree: true, childList: true });
   }
   groups = installNativeGroupViews(host, {
-    more: show, fold: (ref, id) => quick.collapse(ref, id),
     enable: (ref, id, enabled) => quick.groupEnabled(ref, id, enabled),
-    entry: (ref, id, enabled) => quick.entryEnabled(ref, id, enabled),
-    edit: editResource,
   });
   scan();
   document.addEventListener(

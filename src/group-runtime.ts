@@ -1,7 +1,8 @@
 import { NS, pausedMembers } from './core';
 import type { GroupState, Raw } from './types';
+import { groupingEnabled } from './preferences';
 
-export const nativeGrouping = (state?: Partial<GroupState>) => !!state && (state.native === true || !!state.groups?.length);
+export const nativeGrouping = (state?: Partial<GroupState>) => !!state?.groups?.length;
 
 /** The engine has no per-script filter hook. Restrict the runtime overlay to its native disabled check. */
 export function nativeRegexRead(stack = new Error().stack || '') {
@@ -56,6 +57,7 @@ export function gatePromptCollection(collection: any, blocked: Set<string>) {
 }
 
 export function installGroupRuntime(loadModule: (path: string) => Promise<any> = path => import(/* webpackIgnore: true */ new URL(path, location.href).href)) {
+  let enabled = groupingEnabled();
   let stopped = false, scheduled = false, engine: any, openai: any;
   let wanted = new Set<Raw>();
   const bindings = new Map<Raw, () => void>();
@@ -66,7 +68,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
   function promptPlan() {
     const state = promptState();
     if (state !== lastPromptState) { lastPromptState = state; promptBlocked = pausedMembers(state); }
-    return { active: nativeGrouping(state), blocked: promptBlocked };
+    return { active: enabled && nativeGrouping(state), blocked: promptBlocked };
   }
   function sync() {
     if (stopped || !engine) return;
@@ -79,7 +81,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
       [engine.SCRIPT_TYPES.PRESET, live?.extensions?.[NS]?.regexGroups],
       [engine.SCRIPT_TYPES.SCOPED, ch?.data?.extensions?.[NS]?.regexGroups],
     ]) {
-      if (!nativeGrouping(state)) continue;
+      if (!enabled || !nativeGrouping(state)) continue;
       const blocked = pausedMembers(state);
       if (blocked.size) for (const script of engine.getScriptsByType(type)) if (blocked.has(String(script.id))) wanted.add(script);
     }
@@ -114,6 +116,8 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
   for (const event of events) c.eventSource.on(event, schedule);
   document.addEventListener('prw:resources-saved', schedule);
   document.addEventListener('prw:runtime-sync', schedule);
+  const preference = () => { enabled = groupingEnabled(); schedule(); };
+  document.addEventListener('prw:grouping-preference', preference);
   void Promise.all([
     loadModule('/scripts/extensions/regex/engine.js'),
     loadModule('/scripts/openai.js'),
@@ -127,5 +131,6 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
     for (const event of events) c.eventSource.removeListener(event, schedule);
     document.removeEventListener('prw:resources-saved', schedule);
     document.removeEventListener('prw:runtime-sync', schedule);
+    document.removeEventListener('prw:grouping-preference', preference);
   };
 }

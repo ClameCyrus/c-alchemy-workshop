@@ -70,6 +70,44 @@ function groupFields(ext: Raw, snapshot: Snapshot, kind: Kind) {
 }
 export class NativeHost implements Host {
   constructor(private moduleLoader: (path: string) => Promise<any> = nativeModule) {}
+  async setGroupEnabled(ref: Resource, id: string, enabled: boolean) {
+    // Native views refer to live resources; named files still use the normal guarded save path.
+    if (ref.scope === 'preset' && !ref.live) return false;
+    const module = await this.moduleLoader('/script.js'), c = ctx();
+    if (!this.resources(ref.kind).some(r => r.key === ref.key && r.name === ref.name && r.avatar === ref.avatar))
+      throw new Error('当前预设或角色已切换，请重试');
+    const ext = rawExtensions(ref), key = ref.kind === 'preset' ? 'promptGroups' : 'regexGroups';
+    const own = () => ref.scope === 'global' ? c.extensionSettings[NS]?.regexScopes?.global : ext[NS]?.[key];
+    const state = own(), group = state?.groups?.find((g: Raw) => g.id === id);
+    if (!group || state.version !== 1) throw new Error('分组已变更，请重新打开');
+    const changes: { locate: () => Raw | undefined; before: any; present: boolean }[] = [];
+    const update = (locate: () => Raw | undefined) => {
+      const value = locate(); if (!value) return;
+      changes.push({ locate, before: value.enabled, present: Object.hasOwn(value, 'enabled') }); value.enabled = enabled;
+    };
+    update(() => own()?.groups?.find((g: Raw) => g.id === id));
+    if (ref.kind === 'preset' && state.sync?.includes('baibai') && !state.suppressed?.includes('baibai'))
+      update(() => ext.baibaiToolkit?.presetPromptGroups?.groups?.find((g: Raw) => g.id === id));
+    const signal = () => { if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:runtime-sync')); };
+    const persist = async () => {
+      if (ref.scope === 'scoped') await c.writeExtensionField(ref.characterId, NS, clone(ext[NS]));
+      else await module.saveSettings();
+    };
+    signal();
+    try { await persist(); }
+    catch (error) {
+      for (const change of changes) {
+        const value = change.locate(); if (!value || value.enabled !== enabled) continue;
+        if (change.present) value.enabled = change.before; else delete value.enabled;
+      }
+      signal();
+      try { await persist(); }
+      catch { throw new Error(`组开关保存和恢复均失败，请重新载入。${String(error)}`); }
+      throw error;
+    }
+    signal();
+    return true;
+  }
   resources(kind: Kind): Resource[] {
     const c = ctx(),
       m = getManager();

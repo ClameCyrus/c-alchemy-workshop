@@ -45,6 +45,8 @@ fs.mkdirSync(out, { recursive: true });
       assert.equal(await page.locator('.anchor-name').textContent(), '叙事基调');
       assert.equal(await right.locator('.entry').count(), 3);
     });
+    await page.screenshot({ path: path.join(out, 'text-compare-desktop.png'), fullPage: true });
+    await page.getByRole('button',{name:'关闭正文对比',exact:true}).click();
     await page.screenshot({ path: path.join(out, 'desktop.png'), fullPage: true });
     await check('搜索正文和独有筛选', async () => {
       await page.getByRole('button', { name: '清除对比基准', exact: true }).click();
@@ -142,7 +144,7 @@ fs.mkdirSync(out, { recursive: true });
       const css = await preferences.locator('#prw-panel .prw-window').evaluate(e => ({ bg: getComputedStyle(e).backgroundColor, font: getComputedStyle(document.querySelector('#prw-panel .prw-brand-name')).fontFamily }));
       assert.equal(css.bg, 'rgb(240, 251, 255)');
       assert.ok(css.font.includes('851 GBai Marker'));
-      await preferences.getByRole('button', { name: '外观', exact: true }).click();
+      await preferences.getByRole('button', { name: '设置', exact: true }).click();
       await preferences.getByRole('combobox', { name: '配色方式', exact: true }).selectOption('custom');
       await preferences.getByLabel('背景颜色', { exact: true }).fill('#ddeeff');
       await expect(preferences.locator('.prw-window')).toHaveCSS('background-color', 'rgb(221, 238, 255)');
@@ -269,15 +271,15 @@ fs.mkdirSync(out, { recursive: true });
       const list=document.querySelector('#completion_prompt_manager_list');
       const bai=document.createElement('div');bai.className='bai-bai-preset-vue-list-host';list.before(bai);bai.append(list);
       window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw.prompt_order[0].order[1].enabled=false;
-      for(const id of ['a0','a1','a2']) {
+      for(const id of ['a0','a1','a2','a3','a4','a5']) {
         const row=document.createElement('li');row.className='completion_prompt_manager_prompt';row.dataset.pmIdentifier=id;
-        row.innerHTML='<span class="completion_prompt_manager_prompt_name">'+id+'</span><span class="prompt_manager_prompt_controls"></span>';list.append(row);
+        row.innerHTML='<span class="completion_prompt_manager_prompt_name">'+id+'</span><span class="prompt_manager_prompt_controls"><button class="prompt-manager-toggle-action" aria-label="原生开关">切换</button></span>';list.append(row);
       }
       window.__PRW_ORIGINAL_ROW__=list.firstElementChild;
       const regex=document.querySelector('#regex_container');regex.style.display='block';
-      for(const id of ['r1','r2']) {
+      for(const id of ['r1','r2','r3','r4']) {
         const row=document.createElement('div');row.className='regex-script-label';row.id=id;row.dataset.regexScriptId=id;row.dataset.regexType='global';
-        row.innerHTML='<span class="regex_script_name">'+id+'</span><div><button class="edit_existing_regex">编辑</button><button class="delete_regex">删除</button></div>';document.querySelector('#saved_regex_scripts').append(row);
+        row.innerHTML='<input type="checkbox" class="regex_bulk_checkbox" aria-label="选择 '+id+'"><label><input type="checkbox" class="disable_regex" aria-label="原生开关"></label><span class="regex_script_name">'+id+'</span><div><button class="edit_existing_regex">编辑</button><button class="delete_regex">删除</button></div>';document.querySelector('#saved_regex_scripts').append(row);
       }
     });
     await quick.locator('[data-regex-script-id="r1"]:visible .prw-row-more').waitFor();
@@ -320,20 +322,21 @@ fs.mkdirSync(out, { recursive: true });
       assert.ok(saved.transfer?.length);assert.equal(await quick.locator('#prw-panel').count(),0);
       assert.equal(await quick.locator('.prw-range-start').count(),0);
       await quick.getByRole('button',{name:'折叠 就地分组',exact:true}).click();
-      await expect(quick.locator('.prw-native-group-mount [data-pm-identifier="a0"]')).toBeHidden();
+      await expect(quick.locator('#completion_prompt_manager_list [data-pm-identifier="a0"]')).toBeHidden();
       await quick.getByRole('button',{name:'展开 就地分组',exact:true}).click();
-      await expect(quick.locator('.prw-native-group-mount [data-pm-identifier="a0"]')).toBeVisible();
+      await expect(quick.locator('#completion_prompt_manager_list [data-pm-identifier="a0"]')).toBeVisible();
     });
-    await check('柏宝箱原节点保留，原生分组呈现未挂载条目且组暂停不改条目开关', async () => {
-      const mount=quick.locator('.prw-native-group-mount[data-resource-key="preset:preset:春日来信"]');
-      await expect(mount.locator('.prw-native-row')).toHaveCount(6);
-      await expect(quick.locator('#completion_prompt_manager_list')).toBeHidden();
-      assert.equal(await quick.evaluate(()=>document.querySelector('#completion_prompt_manager_list').firstElementChild===window.__PRW_ORIGINAL_ROW__),true);
+    await check('保留原生行和开关，只加分组标题，组暂停不改条目开关', async () => {
+      const mount=quick.locator('#completion_prompt_manager_list');
+      await expect(mount.locator('.completion_prompt_manager_prompt')).toHaveCount(6);
+      await expect(quick.locator('#completion_prompt_manager_list')).toBeVisible();
+      assert.equal(await quick.evaluate(()=>document.querySelector('#completion_prompt_manager_list .completion_prompt_manager_prompt')===window.__PRW_ORIGINAL_ROW__),true);
       const before=await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw));
       await mount.getByRole('button',{name:'暂停 就地分组',exact:true}).click();
       await expect(mount.getByRole('button',{name:'启用 就地分组',exact:true})).toBeVisible();
       assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw)),before);
-      await expect(mount.getByRole('button',{name:'开启 世界细节',exact:true})).toBeVisible();
+      await expect(mount.locator('[data-pm-identifier="a1"] .prompt-manager-toggle-action')).toBeVisible();
+      assert.equal(await mount.getByText('未分组',{exact:true}).count(),0);
       for(const width of [1440,390,320]) {
         await quick.setViewportSize({width,height:1000});
         const bounds=await mount.evaluate(e=>({right:e.getBoundingClientRect().right,width:document.documentElement.scrollWidth}));
@@ -344,7 +347,7 @@ fs.mkdirSync(out, { recursive: true });
       await mount.getByRole('button',{name:'启用 就地分组',exact:true}).click();
       await expect(mount.getByRole('button',{name:'暂停 就地分组',exact:true})).toBeVisible();
       assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw)),before);
-      const regexMount=quick.locator('.prw-native-group-mount[data-resource-key="regex:global"]');
+      const regexMount=quick.locator('#saved_regex_scripts');
       const regexBefore=await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw));
       await regexMount.getByRole('button',{name:'暂停 显示整理',exact:true}).click();
       await expect(regexMount.getByRole('button',{name:'启用 显示整理',exact:true})).toBeVisible();
@@ -354,24 +357,24 @@ fs.mkdirSync(out, { recursive: true });
       assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw)),regexBefore);
     });
     await check('工坊原生分组列表支持多选复制，成功后清空勾选',async()=>{
-      const mount=quick.locator('.prw-native-group-mount[data-resource-key="regex:global"]');
-      await mount.getByRole('checkbox',{name:'选择 折叠思考',exact:true}).check();
-      await mount.getByRole('checkbox',{name:'选择 称呼替换',exact:true}).check();
+      const mount=quick.locator('#saved_regex_scripts');
+      await mount.getByRole('checkbox',{name:'选择 r1',exact:true}).check();
+      await mount.getByRole('checkbox',{name:'选择 r3',exact:true}).check();
       const count=await quick.evaluate(()=>window.__PRW_DEMO_DATA__['regex:global'].raw.length);
       await mount.locator('[data-regex-script-id="r1"] .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'复制 · 2 条',exact:true}).click();
       await quick.waitForFunction(n=>window.__PRW_DEMO_DATA__['regex:global'].raw.length===n+2,count);
-      await expect(mount.locator('.prw-native-selection:checked')).toHaveCount(0);
+      await expect(mount.locator('.regex_bulk_checkbox:checked')).toHaveCount(0);
       await expect(quick.locator('#saved_regex_scripts .regex_bulk_checkbox:checked')).toHaveCount(0);
       await expect(quick.locator('#prw-panel')).toHaveCount(0);
     });
     await check('原生删除也需要就地确认，重新打开工坊读取最新数据', async () => {
-      await quick.locator('.prw-native-group-mount [data-pm-identifier="a1"] .prw-row-more').click();
+      await quick.locator('#completion_prompt_manager_list [data-pm-identifier="a1"] .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'删除…',exact:true}).click();
       let confirmation=quick.getByRole('dialog',{name:'删除条目',exact:true});
       await confirmation.getByRole('button',{name:'取消',exact:true}).click();
       assert.ok(await quick.evaluate(()=>window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw.prompts.some(e=>e.identifier==='a1')));
-      await quick.locator('.prw-native-group-mount [data-pm-identifier="a1"] .prw-row-more').click();
+      await quick.locator('#completion_prompt_manager_list [data-pm-identifier="a1"] .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'删除…',exact:true}).click();
       await confirmation.getByRole('button',{name:'确定',exact:true}).click();
       await quick.waitForFunction(()=>!window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw.prompts.some(e=>e.identifier==='a1'));
@@ -394,9 +397,9 @@ fs.mkdirSync(out, { recursive: true });
     });
     await check('原生分组卸载恢复原节点且停止观察', async () => {
       await quick.evaluate(()=>window.__PRW__.destroy());
-      await expect(quick.locator('.prw-native-group-mount')).toHaveCount(0);
+      await expect(quick.locator('.prw-native-group-header')).toHaveCount(0);
       await expect(quick.locator('#completion_prompt_manager_list')).toBeVisible();
-      assert.equal(await quick.evaluate(()=>document.querySelector('#completion_prompt_manager_list').firstElementChild===window.__PRW_ORIGINAL_ROW__),true);
+      assert.equal(await quick.evaluate(()=>document.querySelector('#completion_prompt_manager_list .completion_prompt_manager_prompt')===window.__PRW_ORIGINAL_ROW__),true);
       await expect(quick.locator('.prw-native-original,.prw-row-more')).toHaveCount(0);
     });
     await quick.close();

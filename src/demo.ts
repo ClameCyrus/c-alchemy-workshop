@@ -142,6 +142,12 @@ class DemoHost implements Host {
     for (const { doc, snapshot } of items) data[doc.ref.key] = clone(snapshot);
   }
   async refresh() {}
+  async setGroupEnabled(ref: Resource, id: string, enabled: boolean) {
+    const group = data[ref.key]?.own?.groups?.find((g: Raw) => g.id === id);
+    if (!group) throw new Error('分组已不存在');
+    group.enabled = enabled;
+    return true;
+  }
 }
 window.__PRW_HOST__ = new DemoHost();
 // Deliberately no TavernHelper global: the preview proves independent startup.

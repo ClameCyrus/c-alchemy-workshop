@@ -112,13 +112,13 @@ export class QuickOperations {
     await saveDocuments(this.host, [doc]);
     this.changed([ref]);
   }
-  async collapse(ref: Resource, id: string) {
-    const doc = await this.load(ref), group = doc.state.groups.find(g => g.id === id);
-    if (!group) throw new Error('分组已不存在');
-    group.collapsed = !group.collapsed; doc.dirty = true;
-    this.guard(ref); await saveDocuments(this.host, [doc]); this.changed([ref]);
-  }
   async groupEnabled(ref: Resource, id: string, enabled: boolean) {
+    this.guard(ref);
+    if (this.host.setGroupEnabled && await this.host.setGroupEnabled(ref, id, enabled)) {
+      if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function')
+        document.dispatchEvent(new CustomEvent('prw:group-state', { detail: { ref, id, enabled } }));
+      return;
+    }
     const doc = await this.load(ref), group = doc.state.groups.find(g => g.id === id);
     if (!group) throw new Error('分组已不存在');
     group.enabled = enabled; doc.state.native = true; doc.dirty = true;

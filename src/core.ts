@@ -402,29 +402,65 @@ export function transferEntries(
   return next.map(e => e.id);
 }
 const normalized = (s: string) => s.replace(/\r\n/g, '\n').trim();
-function bigrams(text: string): Set<string> {
-  const s = text.replace(/\s+/g, ' ').toLowerCase();
-  const set = new Set<string>();
-  for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
-  return set;
+interface TextFeatures {
+  tokens: string[];
+  grams: Map<string, number>;
+  total: number;
+  cost: number;
+  blocks?: Map<number, number[]>;
 }
-const gramsCache = new Map<string, Set<string>>();
-let gramsCost = 0;
-function cachedGrams(s: string) {
-  let g = gramsCache.get(s);
-  if (!g) {
-    g = bigrams(s);
-    const cost = s.length + g.size * 16;
-    if (cost > 8_000_000) return g;
-    while (gramsCache.size && (gramsCache.size >= 1200 || gramsCost + cost > 8_000_000)) {
-      const [key, value] = gramsCache.entries().next().value!;
-      gramsCache.delete(key);
-      gramsCost -= key.length + value.size * 16;
+const featureCache = new Map<string, TextFeatures>();
+let featureCost = 0;
+const FEATURE_BUDGET = 32_000_000;
+function trimFeatures() {
+  while (featureCache.size && (featureCost > FEATURE_BUDGET || featureCache.size > 1200)) {
+    const [key, feature] = featureCache.entries().next().value!;
+    featureCache.delete(key); featureCost -= feature.cost;
+  }
+}
+function features(text: string): TextFeatures {
+  const cached = featureCache.get(text);
+  if (cached) { featureCache.delete(text); featureCache.set(text, cached); return cached; }
+  // Latin languages use words; CJK uses characters. Keep order and repeated occurrences.
+  const tokens = text.toLowerCase().match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[\p{L}\p{N}_]+/gu) || [];
+  const grams = new Map<string, number>();
+  for (let i = 0; i + 2 < tokens.length; i++) {
+    const gram = tokens.slice(i, i + 3).join('\u0001');
+    grams.set(gram, (grams.get(gram) || 0) + 1);
+  }
+  const value = { tokens, grams, total: Math.max(0, tokens.length - 2), cost: text.length * 4 + tokens.length * 24 + grams.size * 80 };
+  if (value.cost <= FEATURE_BUDGET) { featureCache.set(text, value); featureCost += value.cost; trimFeatures(); }
+  return value;
+}
+function blocks(feature: TextFeatures) {
+  if (feature.blocks) return feature.blocks;
+  const hashes = feature.tokens.map(token => {
+    let hash = 2166136261;
+    for (let i = 0; i < token.length; i++) hash = Math.imul(hash ^ token.charCodeAt(i), 16777619);
+    return hash >>> 0;
+  });
+  const result = new Map<number, number[]>(), size = 24;
+  let hash = 0, power = 1;
+  for (let i = 1; i < size; i++) power = Math.imul(power, 127);
+  for (let i = 0; i < hashes.length; i++) {
+    if (i >= size) hash = (hash - Math.imul(hashes[i - size], power)) | 0;
+    hash = (Math.imul(hash, 127) + hashes[i]) | 0;
+    if (i >= size - 1) {
+      const positions = result.get(hash) || [];
+      if (positions.length < 4) positions.push(i - size + 1);
+      result.set(hash, positions);
     }
-    gramsCost += cost;
-    gramsCache.set(s, g);
-  } else { gramsCache.delete(s); gramsCache.set(s, g); }
-  return g;
+  }
+  feature.blocks = result;
+  const cost = result.size * 64;
+  if ([...featureCache.values()].includes(feature)) { feature.cost += cost; featureCost += cost; trimFeatures(); }
+  return result;
+}
+function sharedBlock(a: TextFeatures, b: TextFeatures) {
+  const left = blocks(a), right = blocks(b);
+  for (const [hash, starts] of left) for (const j of right.get(hash) || []) for (const i of starts)
+    if (a.tokens.slice(i, i + 24).every((token, n) => token === b.tokens[j + n])) return true;
+  return false;
 }
 export function settingsOf(e: Entry): Raw {
   const r = e.raw;
@@ -452,24 +488,17 @@ export function matchEntries(a: Entry, b: Entry, threshold = 0.5): Match | null 
     settingsDifferent = stable(settingsOf(a)) !== stable(settingsOf(b));
   if (x === y && (x.length > 0 || a.id === b.id || a.name === b.name))
     return { type: 'exact', score: 1, coverage: 1, settingsDifferent };
-  if (!x || !y)
-    return a.id === b.id || a.name === b.name ? { type: 'similar', score: 0.01, coverage: 0, settingsDifferent } : null;
-  const gx = cachedGrams(x),
-    gy = cachedGrams(y);
+  if (!x || !y) return null;
+  const fx = features(x), fy = features(y);
+  if (Math.min(fx.tokens.length, fy.tokens.length) < 12) return null;
   let common = 0;
-  gx.forEach(g => {
-    if (gy.has(g)) common++;
-  });
-  const score = (2 * common) / Math.max(1, gx.size + gy.size),
-    coverage = common / Math.max(1, Math.min(gx.size, gy.size));
-  const small = x.length < y.length ? x : y,
-    big = x.length < y.length ? y : x;
-  const sharedBlock =
-    (small.length >= 24 && big.includes(small)) ||
-    small.split('\n').some(p => p.trim().length >= 40 && big.includes(p.trim()));
-  if (sharedBlock && coverage >= 0.45) return { type: 'partial', score, coverage, settingsDifferent };
-  if ((Math.min(x.length, y.length) >= 16 && score >= threshold) || a.id === b.id || a.name === b.name)
-    return { type: 'similar', score, coverage, settingsDifferent };
+  const smaller = fx.grams.size <= fy.grams.size ? fx : fy, larger = smaller === fx ? fy : fx;
+  for (const [gram, count] of smaller.grams) common += Math.min(count, larger.grams.get(gram) || 0);
+  const score = (2 * common) / Math.max(1, fx.total + fy.total);
+  const coverage = common / Math.max(1, Math.min(fx.total, fy.total));
+  if (common >= 22 && coverage >= 0.25 && sharedBlock(fx, fy))
+    return { type: 'partial', score, coverage, settingsDifferent };
+  if (common >= 8 && score >= threshold) return { type: 'similar', score, coverage, settingsDifferent };
   return null;
 }
 export function rangeMembers(doc: WorkDocument, a: string, b: string): string[] {
