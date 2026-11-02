@@ -188,12 +188,13 @@ export function rawEntry(entry: Entry, kind: Resource['kind']): Raw {
 function portableGroups(doc: WorkDocument): any {
   if (doc.ref.kind === 'regex') {
     const scripts: Raw = {};
-    for (const e of doc.entries) scripts[e.id] = { groupId: '__ungrouped', order: doc.entries.indexOf(e) };
+    doc.entries.forEach((e, order) => { scripts[e.id] = { ...clone(doc.snapshot.baibai?.scripts?.[e.id]), groupId: '__ungrouped', order }; });
     for (const g of doc.state.groups)
       g.members.forEach((id, order) => {
-        scripts[id] = { groupId: g.id, order };
+        scripts[id] = { ...scripts[id], groupId: g.id, order };
       });
     return {
+      ...clone(doc.snapshot.baibai),
       version: 1,
       groups: doc.state.groups.map((g, order) => ({
         ...g.extra,
@@ -207,8 +208,9 @@ function portableGroups(doc: WorkDocument): any {
     };
   }
   const prompts: Raw = {};
-  for (const g of doc.state.groups) for (const id of g.members) prompts[id] = { groupId: g.id };
+  for (const g of doc.state.groups) for (const id of g.members) prompts[id] = { ...clone(doc.snapshot.baibai?.prompts?.[id]), groupId: g.id };
   return {
+    ...clone(doc.snapshot.baibai),
     version: 1,
     groups: doc.state.groups.map((g, order) => ({
       ...g.extra,
@@ -280,6 +282,12 @@ export function serialize(doc: WorkDocument): Snapshot {
       })),
     ].slice(-10);
   for (const provider of ['baibai', 'transfer'] as const) {
+    const independent = doc.providerGroups?.[provider];
+    if (independent && !deleted.has(provider)) {
+      const alternate = { ...doc, state: { ...doc.state, groups: independent } };
+      out[provider] = provider === 'baibai' ? portableGroups(alternate) : transformTransfer(alternate, out.transfer);
+      continue;
+    }
     if (deleted.has(provider))
       out[provider] =
         provider === 'transfer' && doc.ref.kind === 'regex' ? transformTransfer(doc, out.transfer, true) : undefined;
@@ -394,13 +402,21 @@ function bigrams(text: string): Set<string> {
   return set;
 }
 const gramsCache = new Map<string, Set<string>>();
+let gramsCost = 0;
 function cachedGrams(s: string) {
   let g = gramsCache.get(s);
   if (!g) {
-    if (gramsCache.size > 1200) gramsCache.clear();
     g = bigrams(s);
+    const cost = s.length + g.size * 16;
+    if (cost > 8_000_000) return g;
+    while (gramsCache.size && (gramsCache.size >= 1200 || gramsCost + cost > 8_000_000)) {
+      const [key, value] = gramsCache.entries().next().value!;
+      gramsCache.delete(key);
+      gramsCost -= key.length + value.size * 16;
+    }
+    gramsCost += cost;
     gramsCache.set(s, g);
-  }
+  } else { gramsCache.delete(s); gramsCache.set(s, g); }
   return g;
 }
 export function settingsOf(e: Entry): Raw {

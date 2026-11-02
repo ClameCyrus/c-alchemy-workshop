@@ -1,19 +1,27 @@
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { clone, makeDocument, transferEntries } from './core';
 import { saveDocuments } from './native';
+import { readPreferences, writePreferences } from './preferences';
 import type { Host, Kind, Resource, Side, WorkDocument } from './types';
 
 export const useWorkbench = defineStore('preset-regex-workbench', () => {
+  const preferences = reactive(readPreferences());
+  watch(preferences, () => writePreferences(preferences), { deep: true });
   const documents = reactive<Record<string, WorkDocument>>({});
-  const keys = reactive({ left: '', right: '' });
-  const kind = ref<Kind>('preset');
+  const kind = ref<Kind>(preferences.kind);
+  const keys = reactive({ left: preferences.views[kind.value].left, right: preferences.views[kind.value].right });
   const resources = ref<Resource[]>([]);
   const selected = reactive<Record<string, string[]>>({});
   const anchor = ref<{ key: string; id: string } | null>(null);
-  const operation = ref<'browse' | 'drag' | 'insert'>('browse');
-  const transferAction = ref<'copy' | 'move'>('copy');
-  const activePage = ref<Side>('left');
+  const operation = ref<'browse' | 'drag' | 'insert'>(preferences.operation);
+  const transferAction = ref<'copy' | 'move'>(preferences.transfer);
+  const activePage = ref<Side>(preferences.page);
+  watch([operation, transferAction, activePage], () => {
+    preferences.operation = operation.value;
+    preferences.transfer = transferAction.value;
+    preferences.page = activePage.value;
+  });
   const busy = ref(false);
   const error = ref('');
   const notice = ref('');
@@ -32,23 +40,32 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
       const resource = resources.value.find(r => r.key === key);
       if (!resource) {
         keys[side] = '';
+        preferences.views[kind.value][side] = '';
         return;
       }
       if (!documents[key] || !documents[key].dirty) documents[key] = makeDocument(resource, await host.load(resource));
       keys[side] = key;
+      preferences.views[kind.value][side] = key;
       error.value = '';
     } catch (e) {
       error.value = String(e instanceof Error ? e.message : e);
     }
   }
   async function switchKind(value: Kind) {
+    if (kind.value === value) return;
     kind.value = value;
+    preferences.kind = value;
     resources.value = host.resources(value);
     anchor.value = null;
-    operation.value = 'browse';
-    keys.left = '';
-    keys.right = '';
-    if (resources.value[0]) await load('left', resources.value[0].key);
+    keys.left = preferences.views[value].left;
+    keys.right = preferences.views[value].right;
+    await ensureView(true);
+  }
+  async function ensureView(refresh = false) {
+    const left = resources.value.find(r => r.key === keys.left) || resources.value[0];
+    if (left && (!documents[left.key] || (refresh && !documents[left.key].dirty))) await load('left', left.key);
+    else if (left) { keys.left = left.key; preferences.views[kind.value].left = left.key; }
+    if (keys.right && (!documents[keys.right] || (refresh && !documents[keys.right].dirty))) await load('right', keys.right);
   }
   const snapshot = () => JSON.stringify({ documents, saveOrder: saveOrder.value });
   function restore(json: string) {
@@ -63,6 +80,8 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
       fn();
       history.value.push(before);
       if (history.value.length > 30) history.value.shift();
+      while (history.value.length > 1 && history.value.reduce((n, item) => n + item.length, 0) > 8_000_000)
+        history.value.shift();
       future.value = [];
       error.value = '';
     } catch (e) {
@@ -168,6 +187,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     notice.value = '已放弃修改';
   }
   return {
+    preferences,
     documents,
     keys,
     kind,
@@ -187,6 +207,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     init,
     load,
     switchKind,
+    ensureView,
     change,
     undo,
     redo,

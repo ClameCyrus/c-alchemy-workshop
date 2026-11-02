@@ -3,6 +3,8 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import { NativeHost } from './native';
 import { installNativeMenus } from './bridge';
+import { useWorkbench } from './workbench';
+import { sameResource } from './quick-operations';
 import type { Host, OpenRequest } from './types';
 
 function init() {
@@ -11,12 +13,29 @@ function init() {
   const mount = document.createElement('div');
   mount.id = 'prw-mount';
   document.body.append(mount);
-  const app = createApp(App, { host }).use(createPinia());
+  const pinia = createPinia();
+  const app = createApp(App, { host }).use(pinia);
   const vm = app.mount(mount) as unknown as { open: (request: OpenRequest) => void };
   const open = (request: OpenRequest = {}) => vm.open(request);
   const buttons: HTMLElement[] = [];
+  const wand = document.querySelector('#extensionsMenu');
+  if (wand) {
+    const container = document.createElement('div');
+    container.className = 'extension_container';
+    container.id = 'prw-wand-container';
+    const button = document.createElement('div');
+    button.className = 'list-group-item flex-container flexGap5 interactable prw-wand-entry';
+    button.tabIndex = 0;
+    button.setAttribute('role', 'button');
+    button.innerHTML = '<i class="fa-solid fa-flask extensionsMenuExtensionButton" aria-hidden="true"></i><span class="prw-brand-name">Cの炼金工坊</span>';
+    const launch = () => { open(); document.querySelector<HTMLElement>('#extensionsMenuButton')?.click(); };
+    button.addEventListener('click', launch);
+    button.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launch(); } });
+    container.append(button);
+    wand.append(container);
+    buttons.push(container);
+  }
   for (const [selector, kind] of [
-    ['#extensions_settings2', 'preset'],
     ['#openai_api-presets', 'preset'],
     ['#regex_container', 'regex'],
   ] as const) {
@@ -35,10 +54,16 @@ function init() {
       event.stopPropagation();
       open({ kind });
     });
-    selector === '#regex_container' ? parent.prepend(button) : parent.append(button);
-    buttons.push(button);
+    const row = document.createElement('div');
+    row.className = 'prw-entry-row';
+    row.append(button);
+    selector === '#regex_container' ? parent.prepend(row) : parent.append(row);
+    buttons.push(row);
   }
-  const cleanMenus = installNativeMenus(host, open);
+  const cleanMenus = installNativeMenus(host, open, ref => {
+    if (useWorkbench(pinia).dirty.some(doc => sameResource(doc.ref, ref)))
+      throw new Error('工坊里有这份资源的未保存修改，请先保存或放弃后再试');
+  });
   const destroy = () => {
     cleanMenus();
     app.unmount();

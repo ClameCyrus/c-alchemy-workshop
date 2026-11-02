@@ -157,7 +157,7 @@ export class NativeHost implements Host {
     if (
       doc.ref.kind !== 'regex' ||
       doc.ref.scope === 'global' ||
-      (!doc.cleanup.includes('transfer') &&
+      (!doc.providerGroups?.transfer && !doc.cleanup.includes('transfer') &&
         (!doc.state.sync.includes('transfer') || doc.state.suppressed.includes('transfer')))
     )
       return;
@@ -227,12 +227,14 @@ export class NativeHost implements Host {
         delete settings.baiBaiToolkit.regexListGroups.scopes[key];
       const touchesTransfer =
         !!doc &&
-        (doc.cleanup.includes('transfer') ||
+        (doc.providerGroups?.transfer !== undefined || doc.cleanup.includes('transfer') ||
           (doc.state.sync.includes('transfer') && !doc.state.suppressed.includes('transfer')));
       if (touchesTransfer || (!doc && snapshot.transfer !== undefined)) {
         settings.presetTransfer ||= {};
-        const value = doc
-          ? transformTransfer(doc, settings.presetTransfer.regexScriptGroupings, doc.cleanup.includes('transfer'))
+        const transferDoc = doc?.providerGroups?.transfer
+          ? { ...doc, state: { ...doc.state, groups: doc.providerGroups.transfer } } : doc;
+        const value = transferDoc
+          ? transformTransfer(transferDoc, settings.presetTransfer.regexScriptGroupings, transferDoc.cleanup.includes('transfer'))
           : snapshot.transfer;
         settings.presetTransfer.regexScriptGroupings = clone(value);
         localStorage.setItem('preset-transfer-regex-script-groupings-v2', JSON.stringify(value));

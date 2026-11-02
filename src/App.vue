@@ -18,6 +18,8 @@ import {
   uid,
 } from './core';
 import { useWorkbench } from './workbench';
+import { applyAppearance } from './preferences';
+import { useComparison } from './comparison';
 import type { Entry, Host, Match, OpenRequest, Provider, Side, WorkDocument } from './types';
 
 const props = defineProps<{ host: Host }>();
@@ -38,14 +40,21 @@ const {
   error,
   notice,
 } = storeToRefs(state);
-const opened = ref(false),
-  dual = ref(true),
-  filter = ref('all'),
-  relationFilter = ref('all'),
-  threshold = ref(0.5);
-const search = ref<Record<Side, string>>({ left: '', right: '' });
-const includeUnused = ref(false);
-const groupFilter = ref<Record<Side, string>>({ left: '', right: '' });
+const view = computed(() => state.preferences.views[kind.value]);
+const opened = ref(false), appearanceDialog = ref(false), threshold = ref(0.5);
+const dual = computed({ get: () => view.value.dual, set: value => { view.value.dual = value; } });
+const filter = computed({ get: () => view.value.filter, set: value => { view.value.filter = value; } });
+const relationFilter = computed({ get: () => view.value.relation, set: value => { view.value.relation = value; } });
+const search = computed(() => view.value.search);
+const includeUnused = computed({ get: () => view.value.unused, set: value => { view.value.unused = value; } });
+const groupFilter = computed(() => view.value.groups);
+watch(() => state.preferences.appearance, applyAppearance, { deep: true, immediate: true });
+const searchQuery = ref<Record<Side, string>>({ ...search.value });
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(() => ({ ...search.value }), value => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { searchQuery.value = value; }, 120);
+});
 const rangeStart = ref<{ key: string; id: string } | null>(null);
 const transferSource = ref<string>('');
 const sourceSelections = computed(() =>
@@ -55,6 +64,7 @@ const sourceSelections = computed(() =>
 );
 const sourceIds = computed(() => sourceSelections.value.flatMap(s => s.ids));
 const edit = ref<{ docKey: string; value: Entry } | null>(null);
+const pendingNew = ref<string | null>(null);
 const groupDialog = ref<string | null>(null);
 const chosenProvider = ref('own'),
   clearProviders = ref<Provider[]>([]),
@@ -81,6 +91,14 @@ const anchorEntry = computed(
 );
 const otherDoc = (doc: WorkDocument) => (doc.ref.key === keys.value.left ? docs.value.right : docs.value.left);
 const matchCache = new Map<string, Match | null>();
+const searchCache = new WeakMap<Entry, { name: string; content: string; text: string }>();
+function searchable(entry: Entry) {
+  const old = searchCache.get(entry);
+  if (old?.name === entry.name && old.content === entry.content) return old.text;
+  const text = `${entry.name}\n${entry.content}`.toLowerCase();
+  searchCache.set(entry, { name: entry.name, content: entry.content, text });
+  return text;
+}
 const signatureCache = new WeakMap<
   Entry,
   { content: string; name: string; enabled: boolean; role: string; raw: object; signature: string }
@@ -122,17 +140,11 @@ function compare(a: Entry, b: Entry) {
   matchCache.set(key, result);
   return result;
 }
-const relations = computed(() => {
-  const map = new Map<string, Match>();
-  if (!anchorEntry.value) return map;
-  const doc = anchor.value?.key === keys.value.left ? docs.value.right : docs.value.left;
-  if (!doc) return map;
-  for (const entry of [...doc.entries, ...(includeUnused.value ? doc.unused : [])]) {
-    const match = compare(anchorEntry.value, entry);
-    if (match) map.set(entry.id, match);
-  }
-  return map;
-});
+const { relations, exact, related, working: comparing } = useComparison(() => ({
+  left: docs.value.left, right: docs.value.right, anchor: dual.value ? anchorEntry.value : undefined,
+  anchorKey: anchor.value?.key, unused: includeUnused.value, filter: filter.value,
+  enabled: opened.value && dual.value, threshold: threshold.value,
+}), signature, compare);
 const counts = computed(() => {
   const matches = [...relations.value.values()];
   return {
@@ -152,11 +164,11 @@ const lists = computed(() => {
     if (!doc) continue;
     let list = [...doc.entries, ...(includeUnused.value ? doc.unused : [])];
     const other = otherDoc(doc),
-      query = search.value[side].trim().toLowerCase();
+      query = searchQuery.value[side].trim().toLowerCase();
     if ((filter.value === 'only-left' && side === 'right') || (filter.value === 'only-right' && side === 'left'))
       list = [];
     list = list.filter(entry => {
-      if (query && !`${entry.name}\n${entry.content}`.toLowerCase().includes(query)) return false;
+      if (query && !searchable(entry).includes(query)) return false;
       const group = groupOf(doc, entry.id);
       if (
         group?.collapsed &&
@@ -173,17 +185,11 @@ const lists = computed(() => {
         return false;
       if (filter.value === 'disabled' && entry.enabled) return false;
       if (other && ['exact', 'different', 'only-left', 'only-right'].includes(filter.value)) {
-        const others = [...other.entries, ...(includeUnused.value ? other.unused : [])];
-        if (filter.value.startsWith('only-') && others.some(e => compare(entry, e))) return false;
-        const hasExact =
-          filter.value === 'exact' || filter.value === 'different'
-            ? others.some(e => {
-                const m = compare(entry, e);
-                return m?.type === 'exact' && !m.settingsDifferent;
-              })
-            : false;
+        const hasExact = exact.value[side].has(entry.id);
+        if (comparing.value && filter.value !== 'exact') return false;
+        if (filter.value.startsWith('only-') && related.value[side].has(entry.id)) return false;
         if (filter.value === 'exact' && !hasExact) return false;
-        if (filter.value === 'different' && (hasExact || !others.some(e => compare(entry, e)))) return false;
+        if (filter.value === 'different' && (hasExact || !related.value[side].has(entry.id))) return false;
       }
       if (anchorEntry.value && anchor.value?.key !== doc.ref.key && relationFilter.value !== 'off') {
         const match = relations.value.get(entry.id);
@@ -230,6 +236,7 @@ async function open(request: OpenRequest = {}) {
     opened.value = true;
     if (request.kind && request.kind !== kind.value) await state.switchKind(request.kind);
     else resources.value = props.host.resources(kind.value);
+    await state.ensureView(true);
     if (request.refKey) await state.load('left', request.refKey);
     else if (!docs.value.left && resources.value[0]) await state.load('left', resources.value[0].key);
     const doc = docs.value.left;
@@ -266,7 +273,7 @@ async function open(request: OpenRequest = {}) {
 }
 defineExpose({ open });
 function close() {
-  if (edit.value || confirmBox.value || groupDialog.value) return;
+  if (edit.value || confirmBox.value || groupDialog.value || appearanceDialog.value) return;
   opened.value = false;
   menu.value = null;
 }
@@ -413,16 +420,20 @@ function saveEdit() {
     doc = state.documents[docKey];
   const original = [...doc.entries, ...doc.unused].find(e => e.id === value.id);
   if (!original) {
-    error.value = '条目已不存在';
-    return;
+    if (!pendingNew.value || pendingNew.value !== value.id) {
+      error.value = '条目已不存在';
+      return;
+    }
   }
   if (!value.name.trim()) return;
   state.change(() => {
     if (doc.ref.kind === 'regex') value.content = entryFrom(value.raw, 'regex').content;
-    Object.assign(original, clone(value));
+    if (original) Object.assign(original, clone(value));
+    else doc.entries.push(clone(value));
     doc.dirty = true;
   });
   edit.value = null;
+  pendingNew.value = null;
 }
 async function createEntry(doc: WorkDocument) {
   const name = await input(doc.ref.kind === 'regex' ? '新正则' : '新条目');
@@ -456,10 +467,7 @@ async function createEntry(doc: WorkDocument) {
           injection_order: 100,
         };
   const entry = entryFrom(raw, doc.ref.kind, false);
-  state.change(() => {
-    doc.entries.push(entry);
-    doc.dirty = true;
-  });
+  pendingNew.value = entry.id;
   edit.value = { docKey: doc.ref.key, value: clone(entry) };
 }
 function openGroups(doc: WorkDocument) {
@@ -575,8 +583,10 @@ watch(dual, value => {
   }
 });
 watch(kind, () => {
-  filter.value = 'all';
   detail.value = null;
+  menu.value = null;
+  clearTimeout(searchTimer);
+  searchQuery.value = { ...search.value };
 });
 watch(operation, value => {
   rangeStart.value = null;
@@ -606,6 +616,7 @@ function keydown(e: KeyboardEvent) {
   if (confirmBox.value) finishConfirm(false);
   else if (edit.value) edit.value = null;
   else if (groupDialog.value) groupDialog.value = null;
+  else if (appearanceDialog.value) appearanceDialog.value = false;
   else if (menu.value) menu.value = null;
   else if (rangeStart.value) rangeStart.value = null;
   else close();
@@ -622,6 +633,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', keydown);
   window.removeEventListener('beforeunload', beforeUnload);
   clearTimeout(noticeTimer);
+  clearTimeout(searchTimer);
 });
 </script>
 
@@ -634,8 +646,9 @@ onBeforeUnmount(() => {
           ><small v-if="host.demo" class="demo-badge">演示</small>
         </div>
         <div class="header-actions">
-          <button :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button
-          ><button :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button
+          <button aria-label="外观" title="外观" @click="appearanceDialog = true">◐</button>
+          <button class="history-action" :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button
+          ><button class="history-action" :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button
           ><button class="primary" :disabled="!dirty.length || busy" @click="state.save">
             {{ busy ? '保存中…' : dirty.length ? `保存 · ${dirty.length}` : '已保存' }}</button
           ><button aria-label="关闭" title="关闭" @click="close">✕</button>
@@ -690,7 +703,7 @@ onBeforeUnmount(() => {
         <span class="anchor-name" :title="anchorEntry.name">{{ anchorEntry.name }}</span>
         <div class="match-filters">
           <button :class="{ active: relationFilter === 'all' }" @click="relationFilter = 'all'">
-            {{ counts.total }} 个对应</button
+            {{ comparing ? '对比中…' : `${counts.total} 个对应` }}</button
           ><button class="exact" :class="{ active: relationFilter === 'exact' }" @click="relationFilter = 'exact'">
             相同 {{ counts.exact }}</button
           ><button
@@ -958,7 +971,7 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
               </article>
-              <div v-if="!lists[side].length" class="empty-state">没有找到条目</div>
+              <div v-if="!lists[side].length" class="empty-state">{{ comparing ? '对比中…' : '没有找到条目' }}</div>
               <button
                 v-if="operation === 'insert' && sourceIds.length"
                 class="append-button"
@@ -988,6 +1001,10 @@ onBeforeUnmount(() => {
           }}<span v-if="sourceIds.length"> · {{ sourceIds.length }} 条</span></small
         ><small v-else>{{ dirty.length ? `${dirty.length} 份待保存` : '' }}</small
         ><span class="spacer"></span><small role="status">{{ notice }}</small>
+        <div class="mobile-history">
+          <button :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button>
+          <button :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button>
+        </div>
       </footer>
       <div v-if="edit && editDocument" class="dialog-shade" @click.self="edit = null">
         <form class="edit-dialog" @submit.prevent="saveEdit">
@@ -1117,6 +1134,19 @@ onBeforeUnmount(() => {
           </footer>
         </section>
       </div>
+      <div v-if="appearanceDialog" class="dialog-shade" @click.self="appearanceDialog = false">
+        <section class="appearance-dialog">
+          <header><strong>外观</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
+          <select v-model="state.preferences.appearance.mode" aria-label="配色方式">
+            <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
+          </select>
+          <div v-if="state.preferences.appearance.mode === 'custom'" class="palette-grid">
+            <label v-for="item in [{key:'background',label:'背景'},{key:'text',label:'文字'},{key:'muted',label:'次要文字'},{key:'accent',label:'强调'},{key:'border',label:'边框'}] as const" :key="item.key">
+              {{ item.label }}<input v-model="state.preferences.appearance[item.key]" type="color" :aria-label="item.label + '颜色'" />
+            </label>
+          </div>
+        </section>
+      </div>
       <div v-if="confirmBox" class="dialog-shade confirm-shade">
         <form
           class="confirm-dialog"
@@ -1142,35 +1172,36 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.prw-overlay {
+#prw-panel.prw-overlay {
   position: fixed;
   inset: 0;
   z-index: 100100;
-  background: #07100fc2;
+  background: var(--prw-shade);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  color: #e2e9e6;
+  color: var(--prw-text);
   font:
     14px/1.45 system-ui,
     -apple-system,
     'Microsoft YaHei',
     sans-serif;
-  color-scheme: dark;
+  color-scheme: normal;
 }
 .prw-overlay * {
   box-sizing: border-box;
 }
 .prw-window {
+  contain: layout style;
   width: min(1440px, 100%);
   height: min(920px, calc(100dvh - 40px));
-  background: #151d1c;
-  border: 1px solid #354440;
+  background: var(--prw-bg);
+  border: 1px solid var(--prw-border);
   border-radius: 16px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 28px 100px #0007;
+  box-shadow: 0 28px 100px var(--prw-shadow);
   overflow: hidden;
 }
 .prw-overlay button,
@@ -1179,9 +1210,9 @@ onBeforeUnmount(() => {
 .prw-overlay textarea {
   font: inherit;
   color: inherit;
-  border: 1px solid #394741;
+  border: 1px solid var(--prw-border);
   border-radius: 7px;
-  background: #202b27;
+  background: var(--prw-surface);
   min-width: 0;
 }
 .prw-overlay button {
@@ -1190,7 +1221,7 @@ onBeforeUnmount(() => {
   line-height: 1.25;
 }
 .prw-overlay button:hover {
-  background: #304039;
+  background: var(--prw-hover);
 }
 .prw-overlay button:disabled {
   opacity: 0.35;
@@ -1203,7 +1234,7 @@ onBeforeUnmount(() => {
 }
 .prw-overlay input[type='checkbox'],
 .prw-overlay input[type='radio'] {
-  accent-color: #86c8a3;
+  accent-color: var(--prw-accent);
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -1213,7 +1244,7 @@ onBeforeUnmount(() => {
 .prw-overlay button:focus-visible,
 .prw-overlay select:focus-visible,
 .prw-overlay textarea:focus-visible {
-  outline: 2px solid #9dd4b5;
+  outline: 2px solid var(--prw-accent);
   outline-offset: 2px;
 }
 .prw-header,
@@ -1229,7 +1260,7 @@ onBeforeUnmount(() => {
 }
 .prw-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #303e38;
+  border-bottom: 1px solid var(--prw-border);
   justify-content: space-between;
 }
 .brand {
@@ -1247,14 +1278,14 @@ onBeforeUnmount(() => {
 }
 .brand-icon {
   font-size: 23px;
-  color: #95c7aa;
+  color: var(--prw-accent);
 }
 .brand small {
-  color: #7f9288;
+  color: var(--prw-muted);
   font-size: 11px;
 }
 .demo-badge {
-  border: 1px solid #5f795f;
+  border: 1px solid var(--prw-border);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -1266,22 +1297,22 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .prw-overlay .primary {
-  background: #a3cfb5;
-  color: #13261c;
-  border-color: #a3cfb5;
+  background: var(--prw-active);
+  color: var(--prw-text);
+  border-color: var(--prw-accent);
   font-weight: 650;
 }
 .prw-overlay .primary:hover {
-  background: #bbdfc8;
+  background: var(--prw-hover);
 }
 .prw-toolbar {
   padding: 10px 20px;
   flex-wrap: wrap;
-  border-bottom: 1px solid #303e38;
+  border-bottom: 1px solid var(--prw-border);
 }
 .segmented {
   display: flex;
-  background: #0f1713;
+  background: var(--prw-inset);
   border-radius: 8px;
   padding: 3px;
   gap: 2px;
@@ -1291,9 +1322,9 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 .prw-overlay .active {
-  background: #375445;
-  border-color: #7fb294;
-  color: #dcf5e7;
+  background: var(--prw-active);
+  border-color: var(--prw-accent);
+  color: var(--prw-text);
 }
 .compact-check {
   display: inline-flex;
@@ -1309,16 +1340,16 @@ onBeforeUnmount(() => {
 .context-banner {
   min-height: 42px;
   padding: 7px 20px;
-  background: #1c2b24;
+  background: var(--prw-active);
   justify-content: space-between;
-  border-bottom: 1px solid #32483a;
+  border-bottom: 1px solid var(--prw-border);
 }
 .anchor-name {
   max-width: 35%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #b8d8c3;
+  color: var(--prw-accent);
 }
 .match-filters {
   display: flex;
@@ -1332,13 +1363,13 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 .prw-overlay .exact {
-  color: #96d8af;
+  color: var(--prw-exact);
 }
 .prw-overlay .partial {
-  color: #e1c88b;
+  color: var(--prw-partial);
 }
 .prw-overlay .similar {
-  color: #a2bbee;
+  color: var(--prw-similar);
 }
 .prw-columns {
   display: grid;
@@ -1356,7 +1387,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .prw-column + .prw-column {
-  border-left: 1px solid #354139;
+  border-left: 1px solid var(--prw-border);
 }
 .resource-bar {
   padding: 14px 16px 8px;
@@ -1372,16 +1403,16 @@ onBeforeUnmount(() => {
 .search-bar input {
   flex: 1;
   width: 0;
-  background: #111a16;
+  background: var(--prw-inset);
 }
 .search-bar select {
   max-width: 38%;
   font-size: 12px;
-  background: #111a16;
+  background: var(--prw-inset);
 }
 .list-toolbar {
   padding: 0 16px 8px;
-  color: #91a498;
+  color: var(--prw-muted);
 }
 .list-toolbar button {
   font-size: 12px;
@@ -1399,22 +1430,22 @@ onBeforeUnmount(() => {
   flex: 1;
   padding: 0 12px 16px;
   scrollbar-width: thin;
-  scrollbar-color: #405349 transparent;
+  scrollbar-color: var(--prw-border) transparent;
 }
 .entry {
   position: relative;
-  background: #1c2721;
-  border: 1px solid #33453a;
+  background: var(--prw-surface);
+  border: 1px solid var(--prw-border);
   border-left: 3px solid transparent;
   border-radius: 9px;
   margin: 7px 3px;
   padding: 10px 11px;
   cursor: pointer;
-  color: #c8d4cc;
+  color: var(--prw-text);
   transition: background 0.12s;
 }
 .entry:hover {
-  background: #24352b;
+  background: var(--prw-hover);
 }
 .entry.exact {
   border-left-color: #79bf94;
@@ -1426,12 +1457,12 @@ onBeforeUnmount(() => {
   border-left-color: #829fce;
 }
 .entry.selected {
-  background: #2a3e30;
-  border-color: #648c71;
+  background: var(--prw-active);
+  border-color: var(--prw-border);
 }
 .entry.anchor {
-  outline: 1px solid #a2ccb4;
-  background: #2b3d31;
+  outline: 1px solid var(--prw-accent);
+  background: var(--prw-active);
 }
 .entry.disabled .entry-top strong {
   opacity: 0.6;
@@ -1449,7 +1480,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   flex: 1;
   font-size: 14px;
-  color: #e1ebe4;
+  color: var(--prw-text);
 }
 .entry-top button {
   padding: 2px 5px;
@@ -1459,7 +1490,7 @@ onBeforeUnmount(() => {
 }
 .entry-top .enabled-toggle {
   font-size: 13px;
-  color: #9ccaaf;
+  color: var(--prw-accent);
 }
 .entry p {
   font-size: 12px;
@@ -1470,7 +1501,7 @@ onBeforeUnmount(() => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   margin: 7px 0 3px;
-  color: #95aa9c;
+  color: var(--prw-muted);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -1479,19 +1510,19 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   font-size: 10px;
   line-height: 1.2;
-  color: #789482;
+  color: var(--prw-muted);
   min-height: 12px;
 }
 .tag {
   font-size: 10px;
   padding: 1px 4px;
-  background: #314538;
+  background: var(--prw-active);
   border-radius: 4px;
   white-space: nowrap;
 }
 .drag-handle {
   cursor: grab;
-  color: #93ad9c;
+  color: var(--prw-accent);
   font-size: 19px;
 }
 .row-menu {
@@ -1499,7 +1530,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  border-top: 1px solid #45604c;
+  border-top: 1px solid var(--prw-border);
   margin-top: 9px;
   padding-top: 9px;
 }
@@ -1509,7 +1540,7 @@ onBeforeUnmount(() => {
   padding: 5px 8px;
 }
 .danger {
-  color: #f0aa9f !important;
+  color: var(--prw-danger) !important;
 }
 .insert-actions {
   display: flex;
@@ -1520,14 +1551,14 @@ onBeforeUnmount(() => {
   font-size: 12px;
   padding: 4px 14px;
   border-style: dashed;
-  background: #253e2c;
+  background: var(--prw-active);
 }
 .group-notice {
   padding: 0 16px 5px;
 }
 .group-notice button {
   font-size: 12px;
-  color: #d5c78d;
+  color: var(--prw-warning);
   background: transparent;
   border-color: #6b633e;
 }
@@ -1540,18 +1571,18 @@ onBeforeUnmount(() => {
 .group-chip {
   display: flex;
   align-items: center;
-  border: 1px solid #435847;
+  border: 1px solid var(--prw-border);
   border-radius: 6px;
   position: relative;
 }
 .group-chip > button {
   border: 0;
   font-size: 12px;
-  background: #202f25;
+  background: var(--prw-surface);
   padding: 4px 7px;
 }
 .group-chip small {
-  color: #8d9d91;
+  color: var(--prw-muted);
   margin-left: 5px;
 }
 .group-chip summary {
@@ -1566,9 +1597,9 @@ onBeforeUnmount(() => {
   right: 0;
   display: grid;
   min-width: 100px;
-  background: #26382b;
+  background: var(--prw-surface);
   padding: 5px;
-  border: 1px solid #627d65;
+  border: 1px solid var(--prw-border);
   border-radius: 6px;
 }
 .small-menu button {
@@ -1585,19 +1616,19 @@ onBeforeUnmount(() => {
   display: grid;
   place-content: center;
   min-height: 130px;
-  color: #7d9384;
+  color: var(--prw-muted);
   font-size: 13px;
 }
 .prw-footer {
   padding: 8px 20px;
-  border-top: 1px solid #344239;
+  border-top: 1px solid var(--prw-border);
   min-height: 36px;
-  color: #9db6a6;
+  color: var(--prw-muted);
 }
 .detail-strip {
   max-height: 25%;
-  background: #101a14;
-  border-top: 1px solid #3d5143;
+  background: var(--prw-inset);
+  border-top: 1px solid var(--prw-border);
   display: flex;
   flex-direction: column;
   padding: 10px 20px;
@@ -1626,20 +1657,20 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
   overflow: auto;
   margin: 7px 0;
-  color: #b4c7bb;
+  color: var(--prw-muted);
   max-height: 140px;
 }
 .detail-strip mark {
   color: inherit;
-  background: #366745;
+  background: var(--prw-hover);
 }
 .detail-strip mark.removed {
-  background: #693c39;
+  background: color-mix(in srgb,var(--prw-bg) 82%,#c8493b 18%);
   text-decoration: line-through;
 }
 .error-banner {
-  background: #5b2f2b;
-  color: #ffe2d9;
+  background: color-mix(in srgb,var(--prw-bg) 82%,#c8493b 18%);
+  color: var(--prw-text);
   display: flex;
   gap: 10px;
   padding: 9px 20px;
@@ -1659,7 +1690,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   z-index: 20;
-  background: #050c09c9;
+  background: var(--prw-shade);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1674,14 +1705,14 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background: #1b2921;
-  border: 1px solid #506958;
+  background: var(--prw-surface);
+  border: 1px solid var(--prw-border);
   border-radius: 12px;
   width: min(740px, 100%);
   max-height: 95%;
   overflow: auto;
   padding: 20px;
-  box-shadow: 0 20px 70px #0008;
+  box-shadow: 0 20px 70px var(--prw-shadow);
 }
 .edit-dialog header,
 .group-dialog header,
@@ -1697,7 +1728,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
-  color: #a6beae;
+  color: var(--prw-muted);
 }
 .edit-dialog > label.compact-check {
   flex-direction: row;
@@ -1745,7 +1776,7 @@ onBeforeUnmount(() => {
 }
 .confirm-dialog p {
   white-space: pre-line;
-  color: #d5ded7;
+  color: var(--prw-text);
   overflow-wrap: anywhere;
 }
 .destructive {
@@ -1754,7 +1785,7 @@ onBeforeUnmount(() => {
   border-color: #d18f84 !important;
 }
 .source-card {
-  border: 1px solid #4a6050;
+  border: 1px solid var(--prw-border);
   border-radius: 8px;
   padding: 10px;
 }
@@ -1767,11 +1798,11 @@ onBeforeUnmount(() => {
 .source-card details {
   font-size: 12px;
   padding: 5px 0 0 24px;
-  color: #b0c4b7;
+  color: var(--prw-muted);
 }
 .source-card p {
   font-size: 11px;
-  color: #8da697;
+  color: var(--prw-muted);
   line-height: 1.8;
   overflow-wrap: anywhere;
 }
@@ -1783,10 +1814,10 @@ onBeforeUnmount(() => {
   gap: 10px;
   flex-wrap: wrap;
   font-size: 12px;
-  color: #aec1b3;
+  color: var(--prw-muted);
 }
 .source-option small {
-  color: #a0b09d;
+  color: var(--prw-muted);
 }
 .prw-overlay button,
 .prw-overlay summary {
@@ -1856,7 +1887,7 @@ onBeforeUnmount(() => {
   }
   .mobile-pages {
     display: flex;
-    border-bottom: 1px solid #405044;
+    border-bottom: 1px solid var(--prw-border);
     padding: 5px 10px;
     gap: 6px;
   }
@@ -1983,4 +2014,10 @@ onBeforeUnmount(() => {
     transition: none;
   }
 }
+
+
+.appearance-dialog{width:min(340px,100%);padding:16px;background:var(--prw-bg);border:1px solid var(--prw-border);border-radius:12px;display:grid;gap:14px}.appearance-dialog header{display:flex;align-items:center;justify-content:space-between}.palette-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.palette-grid label{display:flex;align-items:center;justify-content:space-between;gap:8px}.palette-grid input[type=color]{width:38px;height:32px;padding:2px}
+.mobile-history{display:none}
+@media(max-width:420px){.header-actions .history-action{display:none}.mobile-history{display:flex;gap:4px}.mobile-history button{padding:3px 6px}.brand small{display:none}.header-actions button{padding:6px}.brand strong{flex-shrink:0}}
+
 </style>

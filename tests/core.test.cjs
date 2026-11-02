@@ -11,6 +11,23 @@ require.extensions['.ts'] = (module, filename) =>
   );
 const core = require('../src/core.ts');
 const { NativeHost, saveDocuments } = require('../src/native.ts');
+const { QuickOperations } = require('../src/quick-operations.ts');
+
+function quickHarness(refs, snapshots, guard) {
+  const data = clone(snapshots);
+  let commits = 0;
+  const host = {
+    resources: kind => clone(refs.filter(r => r.kind === kind)),
+    load: async ref => clone(data[ref.key]),
+    commit: async items => {
+      for (const { doc } of items) assert.equal(stable(data[doc.ref.key]), doc.baseline);
+      commits++;
+      for (const { doc, snapshot } of items) data[doc.ref.key] = clone(snapshot);
+    },
+    refresh: async () => {},
+  };
+  return { data, host, operations: new QuickOperations(host, guard), commits: () => commits };
+}
 const {
   clone,
   makeDocument,
@@ -354,9 +371,72 @@ test('原生适配器独立保存三类正则，保留当前未保存正文与�
     assert.equal(c.extensionSettings.presetTransfer, undefined);
     assert.equal(chatEvents, 0);
     assert.ok(saveCalls >= 3);
+    c.extensionSettings.baiBaiToolkit = {regexListGroups:{scopes:{global:{groups:[{id:'bai',name:'柏组'}],scripts:{g:{groupId:'bai',order:0}}}}}};
+    c.extensionSettings.presetTransfer = {regexScriptGroupings:{version:2,groups:[{id:'transfer',name:'转移组',scope:'global',memberIds:['g']}]}};
+    const [newId] = await new QuickOperations(host).transfer([{ref:globalRef,ids:['g']}],globalRef,'copy');
+    assert.equal(c.extensionSettings.baiBaiToolkit.regexListGroups.scopes.global.scripts[newId].groupId,'bai');
+    assert.deepEqual(c.extensionSettings.presetTransfer.regexScriptGroupings.groups[0].memberIds,['g',newId]);
+    assert.equal(live.prompts[0].content,'当前未保存正文');
+    assert.equal(chatEvents,0);
   } finally {
     delete global.window;
     delete global.localStorage;
     delete global.document;
   }
+});
+
+
+test('原生快捷复制放在自身下方，保留两个不同的外部分组方案', async () => {
+  const r = ref('quick', 'regex', 'global');
+  const snapshot = {raw:[regex('a'),regex('b')],baibai:{version:1,groups:[{id:'bai',name:'柏组'}],scripts:{a:{groupId:'bai',order:0},b:{groupId:'bai',order:1}}},transfer:{version:2,groups:[{id:'transfer',name:'另一组',scope:'global',memberIds:['a']}]}};
+  const h = quickHarness([r], {[r.key]:snapshot});
+  const [id] = await h.operations.transfer([{ref:r,ids:['a']}],r,'copy');
+  const saved = h.data[r.key];
+  assert.deepEqual(saved.raw.map(e=>e.id),['a',id,'b']);
+  assert.equal(saved.raw[1].disabled,true);
+  assert.deepEqual(saved.raw[1].mystery,{preserve:true});
+  assert.equal(saved.baibai.scripts[id].groupId,'bai');
+  assert.equal(saved.transfer.groups[0].id,'transfer');
+  assert.deepEqual(saved.transfer.groups[0].memberIds,['a',id]);
+  assert.deepEqual(saved.own.groups,[]);
+  assert.equal(h.commits(),1);
+});
+
+test('原生预设复制与显式分组目标都就地保存，不需要工坊草稿', async () => {
+  const a=ref('quick-source'), b=ref('quick-target');
+  const h=quickHarness([a,b],{[a.key]:{raw:preset([prompt('one'),prompt('two')])},[b.key]:{raw:preset([prompt('target')]),baibai:{groups:[{id:'g',name:'目标组'}],prompts:{target:{groupId:'g'}}}}});
+  const [copy]=await h.operations.transfer([{ref:a,ids:['one']}],a,'copy');
+  assert.deepEqual(orderOfQuick(h.data[a.key].raw),['one',copy,'two']);
+  const [intoGroup]=await h.operations.transfer([{ref:a,ids:['two']}],b,'copy',{provider:'baibai',id:'g'});
+  assert.equal(h.data[b.key].baibai.prompts[intoGroup].groupId,'g');
+  assert.deepEqual(h.data[b.key].own.groups[0].members,['target',intoGroup]);
+  assert.equal(h.data[b.key].raw.extensions.regex_scripts[0].substituteRegex,2);
+});
+const orderOfQuick = raw => raw.prompt_order.find(o=>o.character_id===100001).order.map(e=>e.identifier);
+
+test('原生混合范围移动按目标先保存并移除来源分组成员', async () => {
+  const a=ref('g','regex','global'),b={...ref('c','regex','scoped'),avatar:'char.png'},t=ref('p','regex');
+  const h=quickHarness([a,b,t],{[a.key]:{raw:[regex('a')],baibai:{groups:[{id:'g',name:'组'}],scripts:{a:{groupId:'g',order:0}}}},[b.key]:{raw:[regex('b')]},[t.key]:{raw:[]}});
+  await h.operations.transfer([{ref:a,ids:['a']},{ref:b,ids:['b']}],t,'move');
+  assert.equal(h.data[a.key].raw.length,0);assert.equal(h.data[b.key].raw.length,0);
+  assert.deepEqual(h.data[t.key].raw.map(r=>r.id),['a','b']);
+  assert.equal(h.data[a.key].baibai.scripts.a,undefined);
+  assert.equal(h.commits(),1);
+});
+
+test('原生区间分组包含两端，明确采用方案后不清理另一份', async () => {
+  const r=ref('range');const h=quickHarness([r],{[r.key]:{raw:preset([prompt('a'),prompt('b'),prompt('c')]),baibai:{groups:[{id:'bg',name:'柏组'}],prompts:{a:{groupId:'bg'}}},transfer:[{id:'tg',name:'保留',memberIdentifiers:['b']}]}});
+  assert.equal(await h.operations.group(r,'c','a','新组','baibai'),3);
+  const saved=h.data[r.key];assert.deepEqual(saved.own.groups.at(-1).members,['a','b','c']);
+  assert.deepEqual(saved.transfer,[{id:'tg',name:'保留',memberIdentifiers:['b']}]);
+  assert.equal(saved.baibai.prompts.b.groupId,saved.own.groups.at(-1).id);
+});
+
+test('原生快捷操作遇到未保存草稿、失效条目或切换资源时拒绝写入', async () => {
+  const r=ref('guard');const snapshot={raw:preset([prompt('a')])};
+  const h=quickHarness([r],{[r.key]:snapshot},()=>{throw new Error('未保存修改')});
+  await assert.rejects(()=>h.operations.transfer([{ref:r,ids:['a']}],r,'copy'),/未保存修改/);
+  assert.equal(h.commits(),0);assert.deepEqual(h.data[r.key],snapshot);
+  await assert.rejects(()=>h.operations.erase(r,['missing']),/不存在/);
+  await assert.rejects(()=>h.operations.load({...r,name:'changed'}),/切换/);
 });

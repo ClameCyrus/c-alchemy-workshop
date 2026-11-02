@@ -58,6 +58,7 @@ export interface WorkDocument {
   state: GroupState;
   sources: GroupSource[];
   cleanup: Provider[];
+  providerGroups?: Partial<Record<Provider, Group[]>>;
   dirty: boolean;
 }
 export interface Host {
