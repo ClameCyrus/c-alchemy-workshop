@@ -1,0 +1,99 @@
+name: Check and build extension
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'dist/**'
+      - 'THIRD_PARTY_NOTICES.txt'
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c-alchemy-workshop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm run check
+      - name: Data and adapter tests
+        run: pnpm test
+      - name: Build extension
+        run: pnpm run build
+      - name: Verify extension files
+        run: pnpm run check:dist
+      - name: Install browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: UI tests
+        run: pnpm run test:ui
+        env:
+          CI: 'true'
+          PRW_OFFLINE_TEST: '1'
+
+  publish-dist:
+    name: Update installable files
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run check:dist
+      - name: Publish only the tested main revision
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          git fetch --no-tags origin main
+          current_sha="$(git rev-parse FETCH_HEAD)"
+          if [ "$current_sha" != "$EXPECTED_SHA" ]; then
+            echo 'Main has advanced. Leaving this build unpublished.'
+            exit 0
+          fi
+          git add -- dist THIRD_PARTY_NOTICES.txt
+          if git diff --cached --quiet; then
+            echo 'Installable files are already current.'
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'chore: update extension build [skip ci]'
+          git push origin HEAD:main

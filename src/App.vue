@@ -1,0 +1,1986 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { storeToRefs } from 'pinia';
+import {
+  assignGroup,
+  clone,
+  entryFrom,
+  groupOf,
+  makeDocument,
+  matchEntries,
+  normalizeGroups,
+  protectedEntry,
+  rangeMembers,
+  rawEntry,
+  removeEntries,
+  settingsOf,
+  stable,
+  uid,
+} from './core';
+import { useWorkbench } from './workbench';
+import type { Entry, Host, Match, OpenRequest, Provider, Side, WorkDocument } from './types';
+
+const props = defineProps<{ host: Host }>();
+const state = useWorkbench();
+state.init(props.host);
+const {
+  docs,
+  keys,
+  resources,
+  kind,
+  dirty,
+  operation,
+  transferAction,
+  activePage,
+  anchor,
+  selected,
+  busy,
+  error,
+  notice,
+} = storeToRefs(state);
+const opened = ref(false),
+  dual = ref(true),
+  filter = ref('all'),
+  relationFilter = ref('all'),
+  threshold = ref(0.5);
+const search = ref<Record<Side, string>>({ left: '', right: '' });
+const includeUnused = ref(false);
+const groupFilter = ref<Record<Side, string>>({ left: '', right: '' });
+const rangeStart = ref<{ key: string; id: string } | null>(null);
+const transferSource = ref<string>('');
+const sourceSelections = computed(() =>
+  Object.entries(selected.value)
+    .filter(([key, ids]) => ids.length && state.documents[key]?.ref.kind === kind.value)
+    .map(([key, ids]) => ({ key, ids })),
+);
+const sourceIds = computed(() => sourceSelections.value.flatMap(s => s.ids));
+const edit = ref<{ docKey: string; value: Entry } | null>(null);
+const groupDialog = ref<string | null>(null);
+const chosenProvider = ref('own'),
+  clearProviders = ref<Provider[]>([]),
+  syncProviders = ref<Provider[]>([]);
+const confirmBox = ref<{
+  title: string;
+  message: string;
+  destructive: boolean;
+  text?: string;
+  value?: string;
+  resolve: (value: string | boolean | null) => void;
+} | null>(null);
+const menu = ref<{ key: string; id: string } | null>(null);
+const detail = ref<{ key: string; id: string } | null>(null);
+const savedScroll: Record<string, number> = {};
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+const sideNames = computed(() => ({
+  left: docs.value.left?.ref.label || '选择预设',
+  right: docs.value.right?.ref.label || '选择预设',
+}));
+const anchorDoc = computed(() => (anchor.value ? state.documents[anchor.value.key] : undefined));
+const anchorEntry = computed(
+  () => anchorDoc.value && [...anchorDoc.value.entries, ...anchorDoc.value.unused].find(e => e.id === anchor.value?.id),
+);
+const otherDoc = (doc: WorkDocument) => (doc.ref.key === keys.value.left ? docs.value.right : docs.value.left);
+const matchCache = new Map<string, Match | null>();
+const signatureCache = new WeakMap<
+  Entry,
+  { content: string; name: string; enabled: boolean; role: string; raw: object; signature: string }
+>();
+function signature(entry: Entry) {
+  const old = signatureCache.get(entry);
+  if (
+    old &&
+    old.content === entry.content &&
+    old.name === entry.name &&
+    old.enabled === entry.enabled &&
+    old.role === entry.role &&
+    old.raw === entry.raw
+  )
+    return old.signature;
+  const settings = stable(settingsOf(entry));
+  let hash = 2166136261,
+    second = 5381;
+  for (let i = 0; i < entry.content.length; i++) {
+    hash = Math.imul(hash ^ entry.content.charCodeAt(i), 16777619);
+    second = Math.imul(second, 33) ^ entry.content.charCodeAt(i);
+  }
+  const value = `${entry.id}/${entry.name}/${entry.content.length}/${hash >>> 0}/${second >>> 0}/${settings}`;
+  signatureCache.set(entry, {
+    content: entry.content,
+    name: entry.name,
+    enabled: entry.enabled,
+    role: entry.role,
+    raw: entry.raw,
+    signature: value,
+  });
+  return value;
+}
+function compare(a: Entry, b: Entry) {
+  const key = `${signature(a)}\0${signature(b)}\0${threshold.value}`;
+  if (matchCache.has(key)) return matchCache.get(key)!;
+  if (matchCache.size > 20000) matchCache.clear();
+  const result = matchEntries(a, b, threshold.value);
+  matchCache.set(key, result);
+  return result;
+}
+const relations = computed(() => {
+  const map = new Map<string, Match>();
+  if (!anchorEntry.value) return map;
+  const doc = anchor.value?.key === keys.value.left ? docs.value.right : docs.value.left;
+  if (!doc) return map;
+  for (const entry of [...doc.entries, ...(includeUnused.value ? doc.unused : [])]) {
+    const match = compare(anchorEntry.value, entry);
+    if (match) map.set(entry.id, match);
+  }
+  return map;
+});
+const counts = computed(() => {
+  const matches = [...relations.value.values()];
+  return {
+    total: matches.length,
+    exact: matches.filter(m => m.type === 'exact').length,
+    partial: matches.filter(m => m.type === 'partial').length,
+    similar: matches.filter(m => m.type === 'similar').length,
+  };
+});
+function matchFor(doc: WorkDocument, entry: Entry) {
+  return anchor.value && anchor.value.key !== doc.ref.key ? relations.value.get(entry.id) : undefined;
+}
+const lists = computed(() => {
+  const output: Record<Side, Entry[]> = { left: [], right: [] };
+  for (const side of ['left', 'right'] as Side[]) {
+    const doc = docs.value[side];
+    if (!doc) continue;
+    let list = [...doc.entries, ...(includeUnused.value ? doc.unused : [])];
+    const other = otherDoc(doc),
+      query = search.value[side].trim().toLowerCase();
+    if ((filter.value === 'only-left' && side === 'right') || (filter.value === 'only-right' && side === 'left'))
+      list = [];
+    list = list.filter(entry => {
+      if (query && !`${entry.name}\n${entry.content}`.toLowerCase().includes(query)) return false;
+      const group = groupOf(doc, entry.id);
+      if (
+        group?.collapsed &&
+        !query &&
+        !groupFilter.value[side] &&
+        !rangeStart.value &&
+        !(anchor.value && anchor.value.key !== doc.ref.key)
+      )
+        return false;
+      if (
+        groupFilter.value[side] &&
+        (groupFilter.value[side] === '__ungrouped' ? !!group : group?.id !== groupFilter.value[side])
+      )
+        return false;
+      if (filter.value === 'disabled' && entry.enabled) return false;
+      if (other && ['exact', 'different', 'only-left', 'only-right'].includes(filter.value)) {
+        const others = [...other.entries, ...(includeUnused.value ? other.unused : [])];
+        if (filter.value.startsWith('only-') && others.some(e => compare(entry, e))) return false;
+        const hasExact =
+          filter.value === 'exact' || filter.value === 'different'
+            ? others.some(e => {
+                const m = compare(entry, e);
+                return m?.type === 'exact' && !m.settingsDifferent;
+              })
+            : false;
+        if (filter.value === 'exact' && !hasExact) return false;
+        if (filter.value === 'different' && (hasExact || !others.some(e => compare(entry, e)))) return false;
+      }
+      if (anchorEntry.value && anchor.value?.key !== doc.ref.key && relationFilter.value !== 'off') {
+        const match = relations.value.get(entry.id);
+        if (!match || (relationFilter.value !== 'all' && match.type !== relationFilter.value)) return false;
+      }
+      return true;
+    });
+    if (anchorEntry.value && anchor.value?.key !== doc.ref.key && relationFilter.value !== 'off') {
+      const rank = { exact: 3, partial: 2, similar: 1 };
+      list.sort(
+        (a, b) =>
+          rank[relations.value.get(b.id)!.type] - rank[relations.value.get(a.id)!.type] ||
+          relations.value.get(b.id)!.score - relations.value.get(a.id)!.score,
+      );
+    }
+    output[side] = list;
+  }
+  return output;
+});
+function ask(title: string, message: string, destructive = false): Promise<boolean> {
+  return new Promise(resolve => {
+    confirmBox.value = { title, message, destructive, resolve: value => resolve(value === true) };
+  });
+}
+function input(title: string, value = ''): Promise<string | null> {
+  return new Promise(resolve => {
+    confirmBox.value = {
+      title,
+      message: '',
+      destructive: false,
+      text: '名称',
+      value,
+      resolve: value => resolve(typeof value === 'string' ? value : null),
+    };
+  });
+}
+function finishConfirm(ok: boolean) {
+  const box = confirmBox.value;
+  confirmBox.value = null;
+  box?.resolve(ok ? (box.text ? box.value?.trim() || null : true) : null);
+}
+async function open(request: OpenRequest = {}) {
+  try {
+    opened.value = true;
+    if (request.kind && request.kind !== kind.value) await state.switchKind(request.kind);
+    else resources.value = props.host.resources(kind.value);
+    if (request.refKey) await state.load('left', request.refKey);
+    else if (!docs.value.left && resources.value[0]) await state.load('left', resources.value[0].key);
+    const doc = docs.value.left;
+    if (doc && request.entryId) {
+      const entry = [...doc.entries, ...doc.unused].find(e => e.id === request.entryId);
+      if (entry) {
+        anchor.value = { key: doc.ref.key, id: entry.id };
+        if (request.action === 'edit') edit.value = { docKey: doc.ref.key, value: clone(entry) };
+        if (request.action === 'group') rangeStart.value = { key: doc.ref.key, id: entry.id };
+        if (request.action === 'delete' || request.action === 'detach')
+          await erase(doc, [entry.id], request.action === 'detach');
+      }
+    }
+    if (doc && ['copy', 'move'].includes(request.action || '')) {
+      for (const key of Object.keys(selected.value))
+        if (state.documents[key]?.ref.kind === kind.value) selected.value[key] = [];
+      if (request.sources?.length) {
+        for (const source of request.sources) {
+          const ref = resources.value.find(r => r.key === source.refKey);
+          if (!ref) continue;
+          if (!state.documents[ref.key] || !state.documents[ref.key].dirty)
+            state.documents[ref.key] = makeDocument(ref, await props.host.load(ref));
+          selected.value[ref.key] = [...source.ids];
+        }
+      }
+      selected.value[doc.ref.key] = request.ids || (request.entryId ? [request.entryId] : []);
+      transferSource.value = doc.ref.key;
+      transferAction.value = request.action as 'copy' | 'move';
+      operation.value = 'insert';
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+defineExpose({ open });
+function close() {
+  if (edit.value || confirmBox.value || groupDialog.value) return;
+  opened.value = false;
+  menu.value = null;
+}
+async function pick(side: Side, key: string) {
+  await state.load(side, key);
+  await nextTick();
+  restoreScroll(side);
+}
+async function reload(doc: WorkDocument) {
+  if (doc.dirty && !(await ask('重新载入', `${doc.ref.label}\n放弃这份未保存修改？`, true))) return;
+  try {
+    state.documents[doc.ref.key] = makeDocument(doc.ref, await props.host.load(doc.ref));
+    state.history = [];
+    state.future = [];
+    selected.value[doc.ref.key] = [];
+    error.value = '';
+    notice.value = '已重新载入';
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+function restoreScroll(side: Side) {
+  const el = document.querySelector<HTMLElement>(`#prw-panel [data-list="${side}"]`);
+  if (el) el.scrollTop = savedScroll[keys.value[side]] || 0;
+}
+function page(side: Side) {
+  activePage.value = side;
+  nextTick(() => restoreScroll(side));
+}
+function toggleSelect(doc: WorkDocument, id: string, checked: boolean) {
+  const set = new Set(selected.value[doc.ref.key] || []);
+  checked ? set.add(id) : set.delete(id);
+  selected.value[doc.ref.key] = [...set];
+  if (checked) transferSource.value = doc.ref.key;
+}
+function allSelect(side: Side) {
+  const doc = docs.value[side];
+  if (!doc) return;
+  const ids = lists.value[side].filter(e => !protectedEntry(e)).map(e => e.id),
+    old = new Set(selected.value[doc.ref.key] || []);
+  const all = ids.length > 0 && ids.every(id => old.has(id));
+  ids.forEach(id => (all ? old.delete(id) : old.add(id)));
+  selected.value[doc.ref.key] = [...old];
+  transferSource.value = doc.ref.key;
+}
+async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
+  if (rangeStart.value) {
+    if (rangeStart.value.key !== doc.ref.key) {
+      notice.value = '在同一份列表里选终点';
+      return;
+    }
+    const ids = rangeMembers(doc, rangeStart.value.id, entry.id);
+    const hidden = ids.filter(id => !lists.value[side].some(e => e.id === id)).length;
+    const overlap = ids.some(id => groupOf(doc, id));
+    if (
+      (hidden || overlap) &&
+      !(await ask(
+        '建立分组',
+        `${ids.length} 条${hidden ? `，其中 ${hidden} 条未显示` : ''}${overlap ? '；已有分组中的条目会移入新组' : ''}。继续？`,
+      ))
+    )
+      return;
+    const name = await input(`分组 · ${ids.length} 条`);
+    if (!name) return;
+    state.change(() => {
+      const id = uid();
+      doc.state.groups.push({ id, name, members: [], collapsed: false, enabled: true });
+      assignGroup(doc, ids, id);
+    });
+    rangeStart.value = null;
+    notice.value = '已分组';
+    return;
+  }
+  detail.value = { key: doc.ref.key, id: entry.id };
+  if (!anchor.value || anchor.value.key === doc.ref.key) anchor.value = { key: doc.ref.key, id: entry.id };
+}
+async function erase(doc: WorkDocument, ids: string[], detach = false) {
+  menu.value = null;
+  const entries = [...doc.entries, ...doc.unused].filter(e => ids.includes(e.id));
+  if (entries.some(protectedEntry)) {
+    error.value = '系统或占位条目不能移除或删除';
+    return;
+  }
+  if (
+    !detach &&
+    !(await ask(
+      '删除条目',
+      `${doc.ref.label}\n${entries.length === 1 ? entries[0]?.name : `${entries.length} 条`}\n保存后将删除。`,
+      true,
+    ))
+  )
+    return;
+  state.change(() => removeEntries(doc, ids, detach));
+  selected.value[doc.ref.key] = [];
+  notice.value = detach ? '已移出列表' : '已加入待删除';
+}
+function beginTransfer(doc: WorkDocument, entry: Entry, action: 'copy' | 'move') {
+  selected.value[doc.ref.key] = (selected.value[doc.ref.key] || []).includes(entry.id)
+    ? selected.value[doc.ref.key]
+    : [entry.id];
+  transferSource.value = doc.ref.key;
+  transferAction.value = action;
+  operation.value = 'insert';
+  menu.value = null;
+}
+function insert(doc: WorkDocument, id?: string, after = false, groupId?: string) {
+  if (!sourceIds.value.length) {
+    notice.value = '先勾选来源条目';
+    return;
+  }
+  state.transferMany(
+    sourceSelections.value.map(s => ({ key: s.key, ids: [...s.ids] })),
+    doc.ref.key,
+    id,
+    after,
+    groupId,
+  );
+}
+function dragStart(event: DragEvent, doc: WorkDocument, entry: Entry) {
+  if (operation.value !== 'drag' || protectedEntry(entry)) {
+    event.preventDefault();
+    return;
+  }
+  const ids = (selected.value[doc.ref.key] || []).includes(entry.id) ? selected.value[doc.ref.key] : [entry.id];
+  selected.value[doc.ref.key] = [...ids];
+  transferSource.value = doc.ref.key;
+  event.dataTransfer?.setData('application/x-prw', JSON.stringify({ key: doc.ref.key, ids }));
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
+}
+function drop(event: DragEvent, doc: WorkDocument, id?: string, after = false, groupId?: string) {
+  if (operation.value !== 'drag') return;
+  event.preventDefault();
+  try {
+    const value = JSON.parse(event.dataTransfer?.getData('application/x-prw') || '{}');
+    if (Array.isArray(value.ids) && state.documents[value.key])
+      state.transfer(value.key, doc.ref.key, value.ids, id, after, groupId);
+  } catch {
+    error.value = '拖动已取消';
+  }
+}
+function saveEdit() {
+  if (!edit.value) return;
+  const { docKey, value } = edit.value,
+    doc = state.documents[docKey];
+  const original = [...doc.entries, ...doc.unused].find(e => e.id === value.id);
+  if (!original) {
+    error.value = '条目已不存在';
+    return;
+  }
+  if (!value.name.trim()) return;
+  state.change(() => {
+    if (doc.ref.kind === 'regex') value.content = entryFrom(value.raw, 'regex').content;
+    Object.assign(original, clone(value));
+    doc.dirty = true;
+  });
+  edit.value = null;
+}
+async function createEntry(doc: WorkDocument) {
+  const name = await input(doc.ref.kind === 'regex' ? '新正则' : '新条目');
+  if (!name) return;
+  const raw =
+    doc.ref.kind === 'regex'
+      ? {
+          id: uid(),
+          scriptName: name,
+          findRegex: '',
+          replaceString: '',
+          disabled: true,
+          runOnEdit: true,
+          placement: [2],
+          trimStrings: [],
+          substituteRegex: 0,
+          markdownOnly: true,
+          promptOnly: false,
+          minDepth: null,
+          maxDepth: null,
+        }
+      : {
+          identifier: uid(),
+          name,
+          content: '',
+          role: 'system',
+          system_prompt: false,
+          marker: false,
+          injection_position: 0,
+          injection_depth: 4,
+          injection_order: 100,
+        };
+  const entry = entryFrom(raw, doc.ref.kind, false);
+  state.change(() => {
+    doc.entries.push(entry);
+    doc.dirty = true;
+  });
+  edit.value = { docKey: doc.ref.key, value: clone(entry) };
+}
+function openGroups(doc: WorkDocument) {
+  doc.sources = [
+    { provider: 'own', label: '工坊', groups: clone(doc.state.groups), raw: doc.snapshot.own },
+    ...doc.sources.filter(s => s.provider !== 'own'),
+  ];
+  groupDialog.value = doc.ref.key;
+  chosenProvider.value = 'own';
+  clearProviders.value = [...doc.cleanup];
+  syncProviders.value = [...doc.state.sync];
+}
+async function applyGroups() {
+  const doc = state.documents[groupDialog.value!];
+  const selectedSource = doc.sources.find(s => s.provider === chosenProvider.value);
+  const seen = new Set<string>(),
+    overlapping = new Set<string>();
+  selectedSource?.groups.forEach(g =>
+    g.members.forEach(id => {
+      if (seen.has(id)) overlapping.add(id);
+      seen.add(id);
+    }),
+  );
+  if (
+    overlapping.size &&
+    !(await ask('分组有重叠', `${overlapping.size} 条同时属于多个分组。采用后按第一个分组归属，继续？`))
+  )
+    return;
+  if (
+    clearProviders.value.length &&
+    !(await ask(
+      '清理分组记录',
+      `${doc.ref.label}\n清理${clearProviders.value.map(p => (p === 'baibai' ? '柏宝箱' : '预设转移工具')).join('、')}的分组记录，条目保留。`,
+      true,
+    ))
+  )
+    return;
+  state.change(() => {
+    const source = doc.sources.find(s => s.provider === chosenProvider.value);
+    if (source)
+      doc.state.groups = normalizeGroups(
+        clone(source.groups),
+        [...doc.entries, ...doc.unused].map(e => e.id),
+      );
+    doc.cleanup = [...clearProviders.value];
+    doc.state.suppressed = [
+      ...new Set([...doc.state.suppressed.filter(p => !syncProviders.value.includes(p)), ...clearProviders.value]),
+    ];
+    doc.state.sync = syncProviders.value.filter(p => !clearProviders.value.includes(p));
+    doc.dirty = true;
+  });
+  groupDialog.value = null;
+}
+async function groupAction(doc: WorkDocument, id: string, action: 'rename' | 'remove') {
+  const group = doc.state.groups.find(g => g.id === id);
+  if (!group) return;
+  if (action === 'rename') {
+    const name = await input('分组名称', group.name);
+    if (name)
+      state.change(() => {
+        group.name = name;
+        doc.dirty = true;
+      });
+  } else if (await ask('解散分组', `${group.name}\n条目保留。`))
+    state.change(() => {
+      doc.state.groups = doc.state.groups.filter(g => g.id !== id);
+      doc.dirty = true;
+    });
+}
+function download(doc: WorkDocument, entries?: Entry[]) {
+  const data = entries
+    ? entries.map(e => rawEntry(e, doc.ref.kind))
+    : { name: doc.ref.label, entries: doc.entries, unused: doc.unused, groups: doc.state };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${doc.ref.label.replace(/[<>:"/\\|?*]/g, '_')}${entries ? '-条目' : '-工坊备份'}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+const groupDocument = computed(() => (groupDialog.value ? state.documents[groupDialog.value] : undefined));
+const editDocument = computed(() => (edit.value ? state.documents[edit.value.docKey] : undefined));
+const detailEntry = computed(() =>
+  detail.value
+    ? [
+        ...(state.documents[detail.value.key]?.entries || []),
+        ...(state.documents[detail.value.key]?.unused || []),
+      ].find(e => e.id === detail.value?.id)
+    : undefined,
+);
+const diffParts = computed(() => {
+  if (!detailEntry.value || !anchorEntry.value || detail.value?.key === anchor.value?.key) return null;
+  const Diff = window.SillyTavern?.libs?.DiffMatchPatch;
+  if (!Diff) return null;
+  const diff = new Diff(),
+    parts = diff.diff_main(anchorEntry.value.content, detailEntry.value.content);
+  diff.diff_cleanupSemantic(parts);
+  return parts as [number, string][];
+});
+watch(filter, value => {
+  if (value === 'only-left' || value === 'only-right') {
+    anchor.value = null;
+    detail.value = null;
+    page(value === 'only-left' ? 'left' : 'right');
+  }
+});
+watch(dual, value => {
+  if (!value) {
+    filter.value = 'all';
+    anchor.value = null;
+    detail.value = null;
+    activePage.value = 'left';
+  }
+});
+watch(kind, () => {
+  filter.value = 'all';
+  detail.value = null;
+});
+watch(operation, value => {
+  rangeStart.value = null;
+  menu.value = null;
+  if (value !== 'browse') {
+    anchor.value = null;
+    detail.value = null;
+  }
+});
+watch(chosenProvider, value => {
+  if (
+    value !== 'own' &&
+    !clearProviders.value.includes(value as Provider) &&
+    !syncProviders.value.includes(value as Provider)
+  )
+    syncProviders.value.push(value as Provider);
+});
+watch(notice, () => {
+  clearTimeout(noticeTimer);
+  if (notice.value)
+    noticeTimer = setTimeout(() => {
+      notice.value = '';
+    }, 2800);
+});
+function keydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return;
+  if (confirmBox.value) finishConfirm(false);
+  else if (edit.value) edit.value = null;
+  else if (groupDialog.value) groupDialog.value = null;
+  else if (menu.value) menu.value = null;
+  else if (rangeStart.value) rangeStart.value = null;
+  else close();
+}
+function beforeUnload(event: BeforeUnloadEvent) {
+  if (dirty.value.length) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+}
+window.addEventListener('keydown', keydown);
+window.addEventListener('beforeunload', beforeUnload);
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', keydown);
+  window.removeEventListener('beforeunload', beforeUnload);
+  clearTimeout(noticeTimer);
+});
+</script>
+
+<template>
+  <div v-if="opened" id="prw-panel" class="prw-overlay" @click.self="close">
+    <section class="prw-window" role="dialog" aria-modal="true" aria-label="Cの炼金工坊">
+      <header class="prw-header">
+        <div class="brand">
+          <span class="brand-icon">▥</span><strong class="prw-brand-name">Cの炼金工坊</strong><small>0.1.0</small
+          ><small v-if="host.demo" class="demo-badge">演示</small>
+        </div>
+        <div class="header-actions">
+          <button :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button
+          ><button :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button
+          ><button class="primary" :disabled="!dirty.length || busy" @click="state.save">
+            {{ busy ? '保存中…' : dirty.length ? `保存 · ${dirty.length}` : '已保存' }}</button
+          ><button aria-label="关闭" title="关闭" @click="close">✕</button>
+        </div>
+      </header>
+      <nav class="prw-toolbar">
+        <div class="segmented">
+          <button :class="{ active: kind === 'preset' }" @click="state.switchKind('preset')">预设</button
+          ><button :class="{ active: kind === 'regex' }" @click="state.switchKind('regex')">正则</button>
+        </div>
+        <button :class="{ active: dual }" @click="dual = !dual">对比</button>
+        <select v-model="operation" aria-label="操作模式">
+          <option value="browse">浏览</option>
+          <option value="drag">拖动</option>
+          <option value="insert">插入</option>
+        </select>
+        <select v-if="operation !== 'browse'" v-model="transferAction" aria-label="转移方式">
+          <option value="copy">复制</option>
+          <option value="move">移动</option>
+        </select>
+        <select v-model="filter" aria-label="筛选">
+          <option value="all">全部</option>
+          <option v-if="dual" value="exact">相同</option>
+          <option v-if="dual" value="different">有差异</option>
+          <option v-if="dual" value="only-left">仅 {{ sideNames.left }}</option>
+          <option v-if="dual" value="only-right">仅 {{ sideNames.right }}</option>
+          <option value="disabled">已关闭</option>
+        </select>
+        <label v-if="kind === 'preset'" class="compact-check"
+          ><input v-model="includeUnused" type="checkbox" />未加入列表</label
+        >
+        <button
+          v-if="dirty.length"
+          class="text-button"
+          @click="
+            async () => {
+              if (await ask('放弃修改', '放弃所有未保存修改？', true)) await state.discard();
+            }
+          "
+        >
+          放弃
+        </button>
+      </nav>
+      <div v-if="error" class="error-banner" role="alert">
+        <span>{{ error }}</span
+        ><button aria-label="关闭提示" title="关闭提示" @click="error = ''">✕</button>
+      </div>
+      <div v-if="rangeStart" class="context-banner">
+        <span>选择终点</span><button @click="rangeStart = null">取消</button>
+      </div>
+      <div v-else-if="anchorEntry && dual" class="context-banner comparison-banner">
+        <span class="anchor-name" :title="anchorEntry.name">{{ anchorEntry.name }}</span>
+        <div class="match-filters">
+          <button :class="{ active: relationFilter === 'all' }" @click="relationFilter = 'all'">
+            {{ counts.total }} 个对应</button
+          ><button class="exact" :class="{ active: relationFilter === 'exact' }" @click="relationFilter = 'exact'">
+            相同 {{ counts.exact }}</button
+          ><button
+            class="partial"
+            :class="{ active: relationFilter === 'partial' }"
+            @click="relationFilter = 'partial'"
+          >
+            部分 {{ counts.partial }}</button
+          ><button
+            class="similar"
+            :class="{ active: relationFilter === 'similar' }"
+            @click="relationFilter = 'similar'"
+          >
+            相似 {{ counts.similar }}</button
+          ><button
+            aria-label="清除对比基准"
+            title="清除对比基准"
+            @click="
+              anchor = null;
+              detail = null;
+            "
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <nav v-if="dual" class="mobile-pages">
+        <button
+          v-for="side in ['left', 'right'] as Side[]"
+          :key="side"
+          :class="{ active: activePage === side }"
+          :title="sideNames[side]"
+          @click="page(side)"
+        >
+          {{ sideNames[side] }}
+        </button>
+      </nav>
+      <main class="prw-columns" :class="{ single: !dual }">
+        <section
+          v-for="side in (dual ? ['left', 'right'] : ['left']) as Side[]"
+          :key="side"
+          class="prw-column"
+          :class="{ 'mobile-hidden': dual && activePage !== side }"
+        >
+          <div class="resource-bar">
+            <select
+              :value="keys[side]"
+              :aria-label="side === 'left' ? '来源' : '目标'"
+              @change="pick(side, ($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">选择{{ kind === 'regex' ? '范围' : '预设' }}</option>
+              <option v-for="r in resources" :key="r.key" :value="r.key">{{ r.label }}</option></select
+            ><button v-if="docs[side]" aria-label="重新载入" title="重新载入" @click="reload(docs[side])">↻</button
+            ><button v-if="docs[side]" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
+            ><button v-if="docs[side]" aria-label="导出备份" title="导出备份" @click="download(docs[side])">⇩</button>
+          </div>
+          <template v-if="docs[side]">
+            <div class="search-bar">
+              <input
+                v-model="search[side]"
+                type="search"
+                placeholder="搜索名称或正文"
+                :aria-label="`${sideNames[side]} 搜索`"
+              /><select v-model="groupFilter[side]" aria-label="分组筛选">
+                <option value="">所有分组</option>
+                <option value="__ungrouped">未分组</option>
+                <option v-for="g in docs[side].state.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
+              </select>
+            </div>
+            <div class="list-toolbar">
+              <button @click="allSelect(side)">多选</button
+              ><small
+                >{{ lists[side].length }} 条<span v-if="selected[docs[side].ref.key]?.length">
+                  · 已选 {{ selected[docs[side].ref.key].length }}</span
+                ></small
+              ><span class="spacer"></span
+              ><button v-if="selected[docs[side].ref.key]?.length" @click="selected[docs[side].ref.key] = []">
+                取消选择</button
+              ><button aria-label="添加条目" title="添加条目" @click="createEntry(docs[side])">＋</button>
+            </div>
+            <div v-if="!docs[side].snapshot.own && docs[side].sources.length" class="group-notice">
+              <button @click="openGroups(docs[side])">选择分组方案 · {{ docs[side].sources.length }}</button>
+            </div>
+            <div
+              class="entry-list"
+              :data-list="side"
+              @scroll="savedScroll[keys[side]] = ($event.target as HTMLElement).scrollTop"
+              @dragover="operation === 'drag' && $event.preventDefault()"
+              @drop.self="drop($event, docs[side])"
+            >
+              <div v-if="docs[side].state.groups.length" class="group-chips">
+                <div
+                  v-for="g in docs[side].state.groups"
+                  :key="g.id"
+                  class="group-chip"
+                  @dragover="operation === 'drag' && $event.preventDefault()"
+                  @drop.stop="drop($event, docs[side], undefined, false, g.id)"
+                >
+                  <button
+                    :aria-label="`${g.collapsed ? '展开' : '折叠'} ${g.name}`"
+                    @click="
+                      state.change(() => {
+                        g.collapsed = !g.collapsed;
+                        docs[side].dirty = true;
+                      })
+                    "
+                  >
+                    {{ g.collapsed ? '▸' : '▾' }}</button
+                  ><button
+                    :class="{ active: groupFilter[side] === g.id }"
+                    @click="groupFilter[side] = groupFilter[side] === g.id ? '' : g.id"
+                  >
+                    {{ g.name }} <small>{{ g.members.length }}</small>
+                  </button>
+                  <details>
+                    <summary aria-label="分组操作">⋯</summary>
+                    <div class="small-menu">
+                      <button @click="groupAction(docs[side], g.id, 'rename')">改名</button
+                      ><button v-if="operation === 'insert'" @click="insert(docs[side], undefined, false, g.id)">
+                        插入此组</button
+                      ><button @click="groupAction(docs[side], g.id, 'remove')">解散分组</button>
+                    </div>
+                  </details>
+                </div>
+              </div>
+              <article
+                v-for="entry in lists[side]"
+                :key="entry.id"
+                class="entry"
+                :class="[
+                  {
+                    selected: selected[docs[side].ref.key]?.includes(entry.id),
+                    anchor: anchor?.key === docs[side].ref.key && anchor.id === entry.id,
+                    disabled: !entry.enabled,
+                  },
+                  matchFor(docs[side], entry)?.type,
+                ]"
+                :data-entry-id="entry.id"
+                @dragover="operation === 'drag' && $event.preventDefault()"
+                @drop.stop="
+                  drop(
+                    $event,
+                    docs[side],
+                    entry.id,
+                    $event.offsetY > ($event.currentTarget as HTMLElement).clientHeight / 2,
+                  )
+                "
+                @click="selectEntry(docs[side], entry, side)"
+              >
+                <div class="entry-top">
+                  <input
+                    type="checkbox"
+                    :checked="selected[docs[side].ref.key]?.includes(entry.id)"
+                    :disabled="protectedEntry(entry)"
+                    :aria-label="`选择 ${entry.name}`"
+                    @click.stop
+                    @change="toggleSelect(docs[side], entry.id, ($event.target as HTMLInputElement).checked)"
+                  /><span
+                    v-if="operation === 'drag'"
+                    class="drag-handle"
+                    :draggable="!protectedEntry(entry)"
+                    title="拖动"
+                    @click.stop
+                    @dragstart="dragStart($event, docs[side], entry)"
+                    >⠿</span
+                  ><strong :title="entry.name">{{ entry.name }}</strong
+                  ><span v-if="entry.unused" class="tag">未加入</span
+                  ><span v-if="matchFor(docs[side], entry)?.settingsDifferent" class="tag">设置不同</span
+                  ><button
+                    class="enabled-toggle"
+                    :aria-label="entry.enabled ? '关闭条目' : '开启条目'"
+                    :title="entry.enabled ? '关闭' : '开启'"
+                    @click.stop="
+                      state.change(() => {
+                        entry.enabled = !entry.enabled;
+                        docs[side].dirty = true;
+                      })
+                    "
+                  >
+                    {{ entry.enabled ? '●' : '○' }}</button
+                  ><button
+                    class="row-more"
+                    :aria-label="`${entry.name} 更多`"
+                    @click.stop="
+                      menu =
+                        menu?.key === docs[side].ref.key && menu.id === entry.id
+                          ? null
+                          : { key: docs[side].ref.key, id: entry.id }
+                    "
+                  >
+                    ⋯
+                  </button>
+                </div>
+                <p>{{ entry.content.slice(0, 150) || '—' }}</p>
+                <div class="entry-meta">
+                  <span>{{ groupOf(docs[side], entry.id)?.name || '' }}</span
+                  ><span v-if="matchFor(docs[side], entry)"
+                    >{{ Math.round(matchFor(docs[side], entry)!.score * 100) }}%</span
+                  >
+                </div>
+                <div v-if="operation === 'insert' && sourceIds.length" class="insert-actions" @click.stop>
+                  <button @click="insert(docs[side], entry.id)">前面</button
+                  ><button @click="insert(docs[side], entry.id, true)">后面</button>
+                </div>
+                <div v-if="menu?.key === docs[side].ref.key && menu.id === entry.id" class="row-menu" @click.stop>
+                  <button
+                    @click="
+                      edit = { docKey: docs[side].ref.key, value: clone(entry) };
+                      menu = null;
+                    "
+                  >
+                    编辑</button
+                  ><button :disabled="protectedEntry(entry)" @click="beginTransfer(docs[side], entry, 'copy')">
+                    复制到…</button
+                  ><button :disabled="protectedEntry(entry)" @click="beginTransfer(docs[side], entry, 'move')">
+                    移动到…</button
+                  ><button
+                    :disabled="entry.unused"
+                    @click="
+                      rangeStart = { key: docs[side].ref.key, id: entry.id };
+                      menu = null;
+                    "
+                  >
+                    从这里分组</button
+                  ><select
+                    aria-label="加入分组"
+                    :value="groupOf(docs[side], entry.id)?.id || ''"
+                    @change="
+                      state.change(() =>
+                        assignGroup(docs[side], [entry.id], ($event.target as HTMLSelectElement).value || undefined),
+                      );
+                      menu = null;
+                    "
+                  >
+                    <option value="">未分组</option>
+                    <option v-for="g in docs[side].state.groups" :key="g.id" :value="g.id">{{ g.name }}</option></select
+                  ><button
+                    @click="
+                      download(docs[side], [entry]);
+                      menu = null;
+                    "
+                  >
+                    导出</button
+                  ><button
+                    v-if="kind === 'preset' && !entry.unused"
+                    :disabled="protectedEntry(entry)"
+                    @click="erase(docs[side], [entry.id], true)"
+                  >
+                    从列表移除</button
+                  ><button
+                    v-if="entry.unused"
+                    @click="
+                      state.change(() => {
+                        entry.unused = false;
+                        docs[side].unused = docs[side].unused.filter(e => e.id !== entry.id);
+                        docs[side].entries.push(entry);
+                        docs[side].dirty = true;
+                      });
+                      menu = null;
+                    "
+                  >
+                    加入列表</button
+                  ><button class="danger" :disabled="protectedEntry(entry)" @click="erase(docs[side], [entry.id])">
+                    删除…
+                  </button>
+                </div>
+              </article>
+              <div v-if="!lists[side].length" class="empty-state">没有找到条目</div>
+              <button
+                v-if="operation === 'insert' && sourceIds.length"
+                class="append-button"
+                @click="insert(docs[side])"
+              >
+                插入末尾 · {{ sourceIds.length }} 条
+              </button>
+            </div>
+          </template>
+          <div v-else class="empty-state">选择后开始</div>
+        </section>
+      </main>
+      <aside v-if="detailEntry && !rangeStart" class="detail-strip">
+        <div>
+          <strong>{{ detailEntry.name }}</strong
+          ><button title="编辑" @click="edit = { docKey: detail!.key, value: clone(detailEntry) }">编辑</button
+          ><button aria-label="关闭详情" title="关闭详情" @click="detail = null">✕</button>
+        </div>
+        <pre
+          v-if="diffParts"
+        ><template v-for="(part, index) in diffParts" :key="index"><mark v-if="part[0] !== 0" :class="part[0] > 0 ? 'added' : 'removed'">{{ part[1] }}</mark><span v-else>{{ part[1] }}</span></template></pre>
+        <pre v-else>{{ detailEntry.content }}</pre>
+      </aside>
+      <footer class="prw-footer">
+        <small v-if="operation !== 'browse'"
+          >{{ operation === 'drag' ? '拖动' : '插入' }} · {{ transferAction === 'copy' ? '复制' : '移动'
+          }}<span v-if="sourceIds.length"> · {{ sourceIds.length }} 条</span></small
+        ><small v-else>{{ dirty.length ? `${dirty.length} 份待保存` : '' }}</small
+        ><span class="spacer"></span><small role="status">{{ notice }}</small>
+      </footer>
+      <div v-if="edit && editDocument" class="dialog-shade" @click.self="edit = null">
+        <form class="edit-dialog" @submit.prevent="saveEdit">
+          <header>
+            <strong>{{ edit.value.name }}</strong
+            ><button type="button" @click="edit = null">✕</button>
+          </header>
+          <label>名称<input v-model="edit.value.name" required /></label
+          ><label class="compact-check"><input v-model="edit.value.enabled" type="checkbox" />启用</label
+          ><template v-if="editDocument.ref.kind === 'preset'"
+            ><div class="field-row">
+              <label
+                >角色<select v-model="edit.value.role">
+                  <option value="system">系统</option>
+                  <option value="user">用户</option>
+                  <option value="assistant">AI</option>
+                </select></label
+              ><label
+                >位置<select v-model="edit.value.raw.injection_position">
+                  <option :value="0">相对</option>
+                  <option :value="1">聊天中</option>
+                </select></label
+              ><label>深度<input v-model.number="edit.value.raw.injection_depth" type="number" min="0" /></label
+              ><label>顺序<input v-model.number="edit.value.raw.injection_order" type="number" /></label>
+            </div>
+            <label
+              >正文<textarea
+                v-model="edit.value.content"
+                rows="13"
+                :readonly="!!edit.value.raw.marker"
+              ></textarea></label></template
+          ><template v-else
+            ><label>查找<textarea v-model="edit.value.raw.findRegex" rows="3"></textarea></label
+            ><label>替换<textarea v-model="edit.value.raw.replaceString" rows="8"></textarea></label>
+            <div class="field-row">
+              <label
+                >最小深度<input
+                  v-model.number="edit.value.raw.minDepth"
+                  type="number"
+                  @change="
+                    edit.value.raw.minDepth = edit.value.raw.minDepth === '' ? null : edit.value.raw.minDepth
+                  " /></label
+              ><label
+                >最大深度<input
+                  v-model.number="edit.value.raw.maxDepth"
+                  type="number"
+                  @change="
+                    edit.value.raw.maxDepth = edit.value.raw.maxDepth === '' ? null : edit.value.raw.maxDepth
+                  " /></label
+              ><label
+                >替换宏<select v-model="edit.value.raw.substituteRegex">
+                  <option :value="0">不替换</option>
+                  <option :value="1">替换</option>
+                  <option :value="2">转义替换</option>
+                </select></label
+              >
+            </div>
+            <div class="check-row">
+              <label><input v-model="edit.value.raw.markdownOnly" type="checkbox" />仅显示</label
+              ><label><input v-model="edit.value.raw.promptOnly" type="checkbox" />仅提示词</label
+              ><label><input v-model="edit.value.raw.runOnEdit" type="checkbox" />编辑时运行</label>
+            </div>
+            <div class="check-row">
+              <label
+                v-for="item in [
+                  [1, '用户'],
+                  [2, 'AI'],
+                  [3, '命令'],
+                  [5, '世界书'],
+                  [6, '推理'],
+                ]"
+                :key="String(item[0])"
+                ><input v-model="edit.value.raw.placement" type="checkbox" :value="item[0]" />{{ item[1] }}</label
+              >
+            </div>
+            <label
+              >裁剪文本<textarea
+                :value="(edit.value.raw.trimStrings || []).join('\n')"
+                rows="2"
+                @input="
+                  edit.value.raw.trimStrings = ($event.target as HTMLTextAreaElement).value.split('\n').filter(Boolean)
+                "
+              ></textarea></label
+          ></template>
+          <footer>
+            <button type="button" @click="edit = null">取消</button><button class="primary" type="submit">完成</button>
+          </footer>
+        </form>
+      </div>
+      <div v-if="groupDocument" class="dialog-shade" @click.self="groupDialog = null">
+        <section class="group-dialog">
+          <header><strong>分组方案</strong><button @click="groupDialog = null">✕</button></header>
+          <label v-if="!groupDocument.sources.some(s => s.provider === 'own')" class="source-option"
+            ><input v-model="chosenProvider" type="radio" value="own" />工坊 · 空分组</label
+          >
+          <div v-for="source in groupDocument.sources" :key="source.provider" class="source-card">
+            <label class="source-option"
+              ><input v-model="chosenProvider" type="radio" :value="source.provider" />{{ source.label }}
+              <small>{{ source.groups.length }} 组</small></label
+            >
+            <details v-for="g in source.groups" :key="g.id">
+              <summary>
+                {{ g.name }} <small>{{ g.members.length }}</small>
+              </summary>
+              <p>
+                {{
+                  g.members
+                    .map(id => [...groupDocument!.entries, ...groupDocument!.unused].find(e => e.id === id)?.name || id)
+                    .join('、')
+                }}
+              </p>
+            </details>
+            <label v-if="source.provider !== 'own'" class="compact-check danger"
+              ><input v-model="clearProviders" type="checkbox" :value="source.provider" />清理这份记录</label
+            >
+          </div>
+          <div class="sync-options">
+            <span>写回</span
+            ><label v-for="p in ['baibai', 'transfer'] as Provider[]" :key="p" class="compact-check"
+              ><input v-model="syncProviders" :disabled="clearProviders.includes(p)" type="checkbox" :value="p" />{{
+                p === 'baibai' ? '柏宝箱' : '预设转移工具'
+              }}</label
+            >
+          </div>
+          <footer>
+            <button @click="groupDialog = null">取消</button><button class="primary" @click="applyGroups">采用</button>
+          </footer>
+        </section>
+      </div>
+      <div v-if="confirmBox" class="dialog-shade confirm-shade">
+        <form
+          class="confirm-dialog"
+          role="alertdialog"
+          :aria-label="confirmBox.title"
+          @submit.prevent="finishConfirm(true)"
+        >
+          <header>
+            <strong>{{ confirmBox.title }}</strong>
+          </header>
+          <p v-if="confirmBox.message">{{ confirmBox.message }}</p>
+          <label v-if="confirmBox.text"
+            >{{ confirmBox.text }}<input v-model="confirmBox.value" autofocus required
+          /></label>
+          <footer>
+            <button type="button" @click="finishConfirm(false)">取消</button
+            ><button :class="confirmBox.destructive ? 'destructive' : 'primary'" type="submit">确定</button>
+          </footer>
+        </form>
+      </div>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.prw-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100100;
+  background: #07100fc2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: #e2e9e6;
+  font:
+    14px/1.45 system-ui,
+    -apple-system,
+    'Microsoft YaHei',
+    sans-serif;
+  color-scheme: dark;
+}
+.prw-overlay * {
+  box-sizing: border-box;
+}
+.prw-window {
+  width: min(1440px, 100%);
+  height: min(920px, calc(100dvh - 40px));
+  background: #151d1c;
+  border: 1px solid #354440;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 28px 100px #0007;
+  overflow: hidden;
+}
+.prw-overlay button,
+.prw-overlay select,
+.prw-overlay input,
+.prw-overlay textarea {
+  font: inherit;
+  color: inherit;
+  border: 1px solid #394741;
+  border-radius: 7px;
+  background: #202b27;
+  min-width: 0;
+}
+.prw-overlay button {
+  cursor: pointer;
+  padding: 6px 10px;
+  line-height: 1.25;
+}
+.prw-overlay button:hover {
+  background: #304039;
+}
+.prw-overlay button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.prw-overlay input,
+.prw-overlay select,
+.prw-overlay textarea {
+  padding: 7px 9px;
+}
+.prw-overlay input[type='checkbox'],
+.prw-overlay input[type='radio'] {
+  accent-color: #86c8a3;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+.prw-overlay input:focus-visible,
+.prw-overlay button:focus-visible,
+.prw-overlay select:focus-visible,
+.prw-overlay textarea:focus-visible {
+  outline: 2px solid #9dd4b5;
+  outline-offset: 2px;
+}
+.prw-header,
+.prw-toolbar,
+.resource-bar,
+.search-bar,
+.list-toolbar,
+.prw-footer,
+.context-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prw-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #303e38;
+  justify-content: space-between;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+  min-width: 0;
+}
+.brand strong {
+  font-size: 18px;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.brand-icon {
+  font-size: 23px;
+  color: #95c7aa;
+}
+.brand small {
+  color: #7f9288;
+  font-size: 11px;
+}
+.demo-badge {
+  border: 1px solid #5f795f;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.header-actions {
+  display: flex;
+  gap: 7px;
+}
+.header-actions button {
+  white-space: nowrap;
+}
+.prw-overlay .primary {
+  background: #a3cfb5;
+  color: #13261c;
+  border-color: #a3cfb5;
+  font-weight: 650;
+}
+.prw-overlay .primary:hover {
+  background: #bbdfc8;
+}
+.prw-toolbar {
+  padding: 10px 20px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #303e38;
+}
+.segmented {
+  display: flex;
+  background: #0f1713;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+}
+.segmented button {
+  border: 0;
+  background: transparent;
+}
+.prw-overlay .active {
+  background: #375445;
+  border-color: #7fb294;
+  color: #dcf5e7;
+}
+.compact-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.text-button {
+  border-color: transparent !important;
+  background: transparent !important;
+}
+.context-banner {
+  min-height: 42px;
+  padding: 7px 20px;
+  background: #1c2b24;
+  justify-content: space-between;
+  border-bottom: 1px solid #32483a;
+}
+.anchor-name {
+  max-width: 35%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #b8d8c3;
+}
+.match-filters {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.match-filters button {
+  font-size: 12px;
+  padding: 4px 7px;
+  background: transparent;
+}
+.prw-overlay .exact {
+  color: #96d8af;
+}
+.prw-overlay .partial {
+  color: #e1c88b;
+}
+.prw-overlay .similar {
+  color: #a2bbee;
+}
+.prw-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.prw-columns.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.prw-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.prw-column + .prw-column {
+  border-left: 1px solid #354139;
+}
+.resource-bar {
+  padding: 14px 16px 8px;
+}
+.resource-bar select {
+  flex: 1;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.search-bar {
+  padding: 0 16px 8px;
+}
+.search-bar input {
+  flex: 1;
+  width: 0;
+  background: #111a16;
+}
+.search-bar select {
+  max-width: 38%;
+  font-size: 12px;
+  background: #111a16;
+}
+.list-toolbar {
+  padding: 0 16px 8px;
+  color: #91a498;
+}
+.list-toolbar button {
+  font-size: 12px;
+  padding: 4px 7px;
+  border: 0;
+  background: transparent;
+}
+.spacer {
+  flex: 1;
+}
+.entry-list {
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  flex: 1;
+  padding: 0 12px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: #405349 transparent;
+}
+.entry {
+  position: relative;
+  background: #1c2721;
+  border: 1px solid #33453a;
+  border-left: 3px solid transparent;
+  border-radius: 9px;
+  margin: 7px 3px;
+  padding: 10px 11px;
+  cursor: pointer;
+  color: #c8d4cc;
+  transition: background 0.12s;
+}
+.entry:hover {
+  background: #24352b;
+}
+.entry.exact {
+  border-left-color: #79bf94;
+}
+.entry.partial {
+  border-left-color: #d0b778;
+}
+.entry.similar {
+  border-left-color: #829fce;
+}
+.entry.selected {
+  background: #2a3e30;
+  border-color: #648c71;
+}
+.entry.anchor {
+  outline: 1px solid #a2ccb4;
+  background: #2b3d31;
+}
+.entry.disabled .entry-top strong {
+  opacity: 0.6;
+}
+.entry-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.entry-top strong {
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-size: 14px;
+  color: #e1ebe4;
+}
+.entry-top button {
+  padding: 2px 5px;
+  background: transparent;
+  border: 0;
+  font-size: 18px;
+}
+.entry-top .enabled-toggle {
+  font-size: 13px;
+  color: #9ccaaf;
+}
+.entry p {
+  font-size: 12px;
+  line-height: 1.6;
+  max-height: 3.2em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  margin: 7px 0 3px;
+  color: #95aa9c;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.entry-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  line-height: 1.2;
+  color: #789482;
+  min-height: 12px;
+}
+.tag {
+  font-size: 10px;
+  padding: 1px 4px;
+  background: #314538;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.drag-handle {
+  cursor: grab;
+  color: #93ad9c;
+  font-size: 19px;
+}
+.row-menu {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  border-top: 1px solid #45604c;
+  margin-top: 9px;
+  padding-top: 9px;
+}
+.row-menu button,
+.row-menu select {
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.danger {
+  color: #f0aa9f !important;
+}
+.insert-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+}
+.insert-actions button {
+  font-size: 12px;
+  padding: 4px 14px;
+  border-style: dashed;
+  background: #253e2c;
+}
+.group-notice {
+  padding: 0 16px 5px;
+}
+.group-notice button {
+  font-size: 12px;
+  color: #d5c78d;
+  background: transparent;
+  border-color: #6b633e;
+}
+.group-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding: 3px;
+}
+.group-chip {
+  display: flex;
+  align-items: center;
+  border: 1px solid #435847;
+  border-radius: 6px;
+  position: relative;
+}
+.group-chip > button {
+  border: 0;
+  font-size: 12px;
+  background: #202f25;
+  padding: 4px 7px;
+}
+.group-chip small {
+  color: #8d9d91;
+  margin-left: 5px;
+}
+.group-chip summary {
+  list-style: none;
+  padding: 0 5px;
+  cursor: pointer;
+}
+.small-menu {
+  position: absolute;
+  z-index: 3;
+  top: 100%;
+  right: 0;
+  display: grid;
+  min-width: 100px;
+  background: #26382b;
+  padding: 5px;
+  border: 1px solid #627d65;
+  border-radius: 6px;
+}
+.small-menu button {
+  font-size: 12px;
+  text-align: left;
+  border: 0;
+}
+.append-button {
+  width: calc(100% - 6px);
+  margin: 10px 3px;
+  border-style: dashed !important;
+}
+.empty-state {
+  display: grid;
+  place-content: center;
+  min-height: 130px;
+  color: #7d9384;
+  font-size: 13px;
+}
+.prw-footer {
+  padding: 8px 20px;
+  border-top: 1px solid #344239;
+  min-height: 36px;
+  color: #9db6a6;
+}
+.detail-strip {
+  max-height: 25%;
+  background: #101a14;
+  border-top: 1px solid #3d5143;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 20px;
+}
+.detail-strip > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-strip strong {
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-strip button {
+  font-size: 12px;
+  padding: 3px 7px;
+}
+.detail-strip pre {
+  font:
+    12px/1.65 ui-monospace,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  margin: 7px 0;
+  color: #b4c7bb;
+  max-height: 140px;
+}
+.detail-strip mark {
+  color: inherit;
+  background: #366745;
+}
+.detail-strip mark.removed {
+  background: #693c39;
+  text-decoration: line-through;
+}
+.error-banner {
+  background: #5b2f2b;
+  color: #ffe2d9;
+  display: flex;
+  gap: 10px;
+  padding: 9px 20px;
+  font-size: 12px;
+}
+.error-banner span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.error-banner button {
+  background: transparent;
+}
+.mobile-pages {
+  display: none;
+}
+.dialog-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: #050c09c9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.prw-window {
+  position: relative;
+}
+.edit-dialog,
+.group-dialog,
+.confirm-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #1b2921;
+  border: 1px solid #506958;
+  border-radius: 12px;
+  width: min(740px, 100%);
+  max-height: 95%;
+  overflow: auto;
+  padding: 20px;
+  box-shadow: 0 20px 70px #0008;
+}
+.edit-dialog header,
+.group-dialog header,
+.confirm-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.edit-dialog > label,
+.confirm-dialog > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #a6beae;
+}
+.edit-dialog > label.compact-check {
+  flex-direction: row;
+}
+.edit-dialog textarea {
+  resize: vertical;
+  min-height: 40px;
+  font:
+    13px/1.7 ui-monospace,
+    monospace;
+  white-space: pre-wrap;
+}
+.field-row,
+.check-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.field-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 70px;
+  font-size: 12px;
+}
+.check-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.edit-dialog footer,
+.group-dialog footer,
+.confirm-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.confirm-shade {
+  z-index: 30;
+}
+.confirm-dialog {
+  width: min(420px, 100%);
+}
+.confirm-dialog p {
+  white-space: pre-line;
+  color: #d5ded7;
+  overflow-wrap: anywhere;
+}
+.destructive {
+  background: #a54f46 !important;
+  color: white !important;
+  border-color: #d18f84 !important;
+}
+.source-card {
+  border: 1px solid #4a6050;
+  border-radius: 8px;
+  padding: 10px;
+}
+.source-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.source-card details {
+  font-size: 12px;
+  padding: 5px 0 0 24px;
+  color: #b0c4b7;
+}
+.source-card p {
+  font-size: 11px;
+  color: #8da697;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.source-card .compact-check {
+  margin: 8px 0 0 24px;
+}
+.sync-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #aec1b3;
+}
+.source-option small {
+  color: #a0b09d;
+}
+.prw-overlay button,
+.prw-overlay summary {
+  -webkit-tap-highlight-color: transparent;
+}
+@media (max-width: 760px) {
+  .prw-overlay {
+    padding: 0;
+    font-size: 13px;
+  }
+  .prw-window {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  .prw-header {
+    padding: 10px 12px;
+  }
+  .brand {
+    gap: 6px;
+  }
+  .brand strong {
+    font-size: 16px;
+  }
+  .brand small {
+    font-size: 9px;
+  }
+  .header-actions {
+    gap: 4px;
+  }
+  .header-actions button {
+    padding: 6px 8px;
+  }
+  .prw-toolbar {
+    padding: 7px 10px;
+    gap: 6px;
+  }
+  .prw-toolbar > select {
+    max-width: 100%;
+    font-size: 12px;
+  }
+  .compact-check {
+    font-size: 11px;
+  }
+  .context-banner {
+    padding: 6px 10px;
+    gap: 5px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .anchor-name {
+    max-width: 100%;
+    font-size: 12px;
+  }
+  .match-filters {
+    gap: 4px;
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .match-filters button {
+    font-size: 11px;
+    white-space: nowrap;
+    padding: 4px 6px;
+  }
+  .mobile-pages {
+    display: flex;
+    border-bottom: 1px solid #405044;
+    padding: 5px 10px;
+    gap: 6px;
+  }
+  .mobile-pages button {
+    flex: 1;
+    min-width: 0;
+    max-width: 50%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+    padding: 7px;
+  }
+  .prw-columns {
+    display: flex;
+    min-height: 0;
+  }
+  .prw-column {
+    flex: 1;
+  }
+  .prw-column + .prw-column {
+    border: 0;
+  }
+  .mobile-hidden {
+    display: none;
+  }
+  .resource-bar {
+    padding: 9px 10px 7px;
+    gap: 5px;
+  }
+  .resource-bar select {
+    font-size: 12px;
+  }
+  .resource-bar button {
+    padding: 6px 8px;
+  }
+  .search-bar {
+    padding: 0 10px 6px;
+    gap: 5px;
+  }
+  .search-bar input {
+    font-size: 12px;
+    padding: 7px;
+  }
+  .search-bar select {
+    font-size: 11px;
+    padding: 7px 5px;
+  }
+  .list-toolbar {
+    padding: 0 10px 4px;
+  }
+  .entry-list {
+    padding: 0 7px 12px;
+  }
+  .entry {
+    margin: 6px 2px;
+    padding: 9px;
+  }
+  .entry-top strong {
+    font-size: 13px;
+  }
+  .entry-top {
+    gap: 5px;
+  }
+  .entry p {
+    font-size: 11px;
+    margin-top: 5px;
+  }
+  .entry-meta {
+    font-size: 9px;
+  }
+  .prw-footer {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .detail-strip {
+    padding: 8px 10px;
+    max-height: 22%;
+  }
+  .detail-strip pre {
+    font-size: 11px;
+    max-height: 85px;
+  }
+  .dialog-shade {
+    padding: 8px;
+  }
+  .edit-dialog,
+  .group-dialog,
+  .confirm-dialog {
+    padding: 14px;
+    max-height: 97%;
+    border-radius: 10px;
+    gap: 10px;
+  }
+  .edit-dialog textarea {
+    font-size: 12px;
+  }
+  .field-row {
+    gap: 6px;
+  }
+  .field-row label {
+    min-width: 60px;
+  }
+  .error-banner {
+    padding: 7px 10px;
+  }
+  .group-notice {
+    padding: 0 10px 4px;
+  }
+}
+@media (max-width: 360px) {
+  .brand small:not(.demo-badge) {
+    display: none;
+  }
+  .brand strong {
+    font-size: 15px;
+  }
+  .header-actions button {
+    padding: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .entry {
+    transition: none;
+  }
+}
+</style>

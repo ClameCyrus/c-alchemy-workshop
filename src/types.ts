@@ -1,0 +1,83 @@
+export type Raw = Record<string, any>;
+export type Provider = 'baibai' | 'transfer';
+export type Kind = 'preset' | 'regex';
+export type Scope = 'global' | 'scoped' | 'preset';
+export type Side = 'left' | 'right';
+export interface Resource {
+  key: string;
+  label: string;
+  kind: Kind;
+  scope: Scope;
+  name?: string;
+  live?: boolean;
+  characterId?: number;
+  avatar?: string;
+}
+export interface Entry {
+  id: string;
+  name: string;
+  content: string;
+  enabled: boolean;
+  role: string;
+  raw: Raw;
+  unused?: boolean;
+}
+export interface Group {
+  id: string;
+  name: string;
+  members: string[];
+  collapsed: boolean;
+  enabled: boolean;
+  extra?: Raw;
+}
+export interface GroupState {
+  version: 1;
+  groups: Group[];
+  sync: Provider[];
+  suppressed: Provider[];
+  backups?: Raw[];
+}
+export interface Snapshot {
+  raw: any;
+  own?: any;
+  baibai?: any;
+  transfer?: any;
+}
+export interface GroupSource {
+  provider: 'own' | Provider;
+  label: string;
+  groups: Group[];
+  raw: any;
+}
+export interface WorkDocument {
+  ref: Resource;
+  baseline: string;
+  snapshot: Snapshot;
+  entries: Entry[];
+  unused: Entry[];
+  state: GroupState;
+  sources: GroupSource[];
+  cleanup: Provider[];
+  dirty: boolean;
+}
+export interface Host {
+  demo?: boolean;
+  resources: (kind: Kind) => Resource[];
+  load: (ref: Resource) => Promise<Snapshot>;
+  commit: (items: { doc: WorkDocument; snapshot: Snapshot }[]) => Promise<void>;
+  refresh: (refs: Resource[]) => Promise<void>;
+}
+export interface OpenRequest {
+  kind?: Kind;
+  refKey?: string;
+  entryId?: string;
+  ids?: string[];
+  sources?: { refKey: string; ids: string[] }[];
+  action?: 'edit' | 'copy' | 'move' | 'group' | 'delete' | 'detach';
+}
+export interface Match {
+  type: 'exact' | 'partial' | 'similar';
+  score: number;
+  coverage: number;
+  settingsDifferent: boolean;
+}

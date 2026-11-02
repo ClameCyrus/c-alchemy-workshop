@@ -1,0 +1,11 @@
+@import url("https://fontsapi.zeoseven.com/2166/main/result.css");
+
+.prw-brand-name{font-family:"851 GBai Marker",system-ui,sans-serif!important;font-weight:normal!important;font-synthesis:none}
+.prw-open-button{display:inline-flex!important;align-items:center;gap:5px;margin:5px!important;font-size:13px!important;cursor:pointer}
+.prw-row-more{font:700 20px/1 system-ui!important;min-width:26px;min-height:24px;flex-shrink:0;cursor:pointer;padding:2px 5px!important;background:transparent;color:inherit;border:0;border-radius:5px}
+.prw-enhanced-regex .regex_script_expand,.prw-enhanced-regex .regex_script_buttons,.prw-enhanced-regex .th-regex-copy-button,.prw-enhanced-regex .edit_existing_regex,.prw-enhanced-regex .delete_regex,.prw-enhanced-regex .move_to_global,.prw-enhanced-regex .move_to_scoped,.prw-enhanced-regex .move_to_preset,.prw-enhanced-regex .export_regex,.prw-enhanced-preset .prompt-manager-detach-action,.prw-enhanced-preset [data-preset-prompt-action="delete"],.prw-enhanced-preset .bai-bai-preset-prompt-actions-hint{display:none!important}
+#regex_container.prw-bulk-ready #th-regex-bulk-copy{display:none!important}
+.prw-native-menu:popover-open{position:fixed;inset:auto;margin:0;z-index:100200;display:flex;flex-direction:column;gap:2px;min-width:160px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;padding:6px;border:1px solid #536858;border-radius:9px;background:#1c2a21;color:#e2e9e6;box-shadow:0 12px 40px #0007;color-scheme:dark}
+.prw-native-menu button{font:13px/1.4 system-ui;text-align:left;border:0;border-radius:5px;background:transparent;color:inherit;padding:8px 10px;cursor:pointer}
+.prw-native-menu button:hover,.prw-native-menu button:focus-visible{background:#344b3b;outline:none}.prw-native-menu .prw-native-danger{color:#f0aa9f}
+@media(max-width:760px){.prw-native-menu button{padding:10px 12px}.prw-open-button{font-size:12px!important}}

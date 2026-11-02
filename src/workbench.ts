@@ -1,0 +1,198 @@
+import { computed, reactive, ref } from 'vue';
+import { defineStore } from 'pinia';
+import { clone, makeDocument, transferEntries } from './core';
+import { saveDocuments } from './native';
+import type { Host, Kind, Resource, Side, WorkDocument } from './types';
+
+export const useWorkbench = defineStore('preset-regex-workbench', () => {
+  const documents = reactive<Record<string, WorkDocument>>({});
+  const keys = reactive({ left: '', right: '' });
+  const kind = ref<Kind>('preset');
+  const resources = ref<Resource[]>([]);
+  const selected = reactive<Record<string, string[]>>({});
+  const anchor = ref<{ key: string; id: string } | null>(null);
+  const operation = ref<'browse' | 'drag' | 'insert'>('browse');
+  const transferAction = ref<'copy' | 'move'>('copy');
+  const activePage = ref<Side>('left');
+  const busy = ref(false);
+  const error = ref('');
+  const notice = ref('');
+  const history = ref<string[]>([]),
+    future = ref<string[]>([]);
+  const saveOrder = ref<string[]>([]);
+  let host: Host;
+  const dirty = computed(() => Object.values(documents).filter(d => d.dirty));
+  const docs = computed(() => ({ left: documents[keys.left], right: documents[keys.right] }));
+  function init(value: Host) {
+    host = value;
+    resources.value = host.resources(kind.value);
+  }
+  async function load(side: Side, key: string) {
+    try {
+      const resource = resources.value.find(r => r.key === key);
+      if (!resource) {
+        keys[side] = '';
+        return;
+      }
+      if (!documents[key] || !documents[key].dirty) documents[key] = makeDocument(resource, await host.load(resource));
+      keys[side] = key;
+      error.value = '';
+    } catch (e) {
+      error.value = String(e instanceof Error ? e.message : e);
+    }
+  }
+  async function switchKind(value: Kind) {
+    kind.value = value;
+    resources.value = host.resources(value);
+    anchor.value = null;
+    operation.value = 'browse';
+    keys.left = '';
+    keys.right = '';
+    if (resources.value[0]) await load('left', resources.value[0].key);
+  }
+  const snapshot = () => JSON.stringify({ documents, saveOrder: saveOrder.value });
+  function restore(json: string) {
+    const value = JSON.parse(json);
+    Object.keys(documents).forEach(k => delete documents[k]);
+    Object.assign(documents, value.documents);
+    saveOrder.value = value.saveOrder;
+  }
+  function change(fn: () => void) {
+    const before = snapshot();
+    try {
+      fn();
+      history.value.push(before);
+      if (history.value.length > 30) history.value.shift();
+      future.value = [];
+      error.value = '';
+    } catch (e) {
+      restore(before);
+      error.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+  function undo() {
+    const value = history.value.pop();
+    if (value) {
+      future.value.push(snapshot());
+      restore(value);
+    }
+  }
+  function redo() {
+    const value = future.value.pop();
+    if (value) {
+      history.value.push(snapshot());
+      restore(value);
+    }
+  }
+  function transfer(
+    sourceKey: string,
+    targetKey: string,
+    ids: string[],
+    beforeId?: string,
+    after = false,
+    groupId?: string,
+  ) {
+    transferMany([{ key: sourceKey, ids }], targetKey, beforeId, after, groupId);
+  }
+  function transferMany(
+    sources: { key: string; ids: string[] }[],
+    targetKey: string,
+    beforeId?: string,
+    after = false,
+    groupId?: string,
+  ) {
+    const target = documents[targetKey];
+    if (!target || sources.some(s => !documents[s.key])) {
+      error.value = '先选择目标';
+      return;
+    }
+    let success = false;
+    change(() => {
+      let position = beforeId,
+        afterPosition = after;
+      for (const item of sources) {
+        const added = transferEntries(
+          documents[item.key],
+          target,
+          item.ids,
+          transferAction.value,
+          position,
+          afterPosition,
+          groupId,
+        );
+        if (added.length) {
+          position = added[added.length - 1];
+          afterPosition = true;
+          success = true;
+        }
+      }
+      if (!success) return;
+      const dependency = [
+        targetKey,
+        ...(transferAction.value === 'move' ? sources.map(s => s.key).filter(k => k !== targetKey) : []),
+      ];
+      saveOrder.value = [...new Set([...dependency, ...saveOrder.value])];
+    });
+    if (success && !error.value) {
+      sources.forEach(s => {
+        selected[s.key] = [];
+      });
+      notice.value = `${transferAction.value === 'copy' ? '已复制' : '已移动'} ${sources.reduce((n, s) => n + s.ids.length, 0)} 条`;
+    }
+  }
+  async function save() {
+    if (busy.value) return;
+    busy.value = true;
+    try {
+      const updated = await saveDocuments(host, dirty.value, saveOrder.value);
+      updated.forEach(doc => {
+        documents[doc.ref.key] = doc;
+      });
+      history.value = [];
+      future.value = [];
+      saveOrder.value = [];
+      error.value = '';
+      notice.value = updated.some(d => d.ref.live) ? '已保存；使用中版本已应用' : '已保存';
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+  async function discard() {
+    for (const doc of dirty.value) documents[doc.ref.key] = makeDocument(doc.ref, await host.load(doc.ref));
+    history.value = [];
+    future.value = [];
+    saveOrder.value = [];
+    error.value = '';
+    notice.value = '已放弃修改';
+  }
+  return {
+    documents,
+    keys,
+    kind,
+    resources,
+    selected,
+    anchor,
+    operation,
+    transferAction,
+    activePage,
+    busy,
+    error,
+    notice,
+    history,
+    future,
+    dirty,
+    docs,
+    init,
+    load,
+    switchKind,
+    change,
+    undo,
+    redo,
+    transfer,
+    transferMany,
+    save,
+    discard,
+  };
+});
