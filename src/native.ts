@@ -293,6 +293,24 @@ export class NativeHost implements Host {
       if (fn) await fn();
     }
   }
+  async edit(ref: Resource, id: string) {
+    if (!this.resources(ref.kind).some(r => r.key === ref.key && r.name === ref.name && r.avatar === ref.avatar))
+      throw new Error('当前预设或角色已切换，请重试');
+    if (ref.kind === 'preset') {
+      if (getManager().getSelectedPresetName() !== ref.name) throw new Error('预设已切换，请重试');
+      const mod = await this.moduleLoader('/scripts/openai.js');
+      if (!mod.promptManager?.handleEdit) throw new Error('当前酒馆没有原生预设编辑接口');
+      const row = document.createElement('div'); row.className = `${mod.promptManager.configuration?.prefix || 'completion_'}prompt_manager_prompt`; row.dataset.pmIdentifier = id;
+      const target = document.createElement('button'); row.append(target);
+      mod.promptManager.handleEdit({ target });
+      return;
+    }
+    const root = document.querySelector(ref.scope === 'global' ? '#saved_regex_scripts' : ref.scope === 'scoped' ? '#saved_scoped_scripts' : '#saved_preset_scripts');
+    const row = [...root?.querySelectorAll<HTMLElement>('.regex-script-label') || []].find(e => (e.dataset.regexScriptId || e.id) === id);
+    const button = row?.querySelector<HTMLElement>('.edit_existing_regex');
+    if (!button) return false;
+    button.click();
+  }
 }
 export async function saveDocuments(
   host: Host,
@@ -315,5 +333,7 @@ export async function saveDocuments(
   } catch (error) {
     console.warn('[Cの炼金工坊] 已保存，原面板刷新失败', error);
   }
+  if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function')
+    document.dispatchEvent(new CustomEvent('prw:resources-saved', { detail: dirty.map(d => d.ref) }));
   return result;
 }

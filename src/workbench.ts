@@ -159,21 +159,28 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
       notice.value = `${transferAction.value === 'copy' ? '已复制' : '已移动'} ${sources.reduce((n, s) => n + s.ids.length, 0)} 条`;
     }
   }
-  async function save() {
-    if (busy.value) return;
+  function checkSaveOnly(key: string) {
+    if (saveOrder.value.includes(key) && dirty.value.some(d => d.ref.key !== key && saveOrder.value.includes(d.ref.key)))
+      throw new Error('此预设有尚未保存的跨预设操作，请先保存或放弃修改');
+  }
+  async function save(onlyKey?: string) {
+    if (busy.value) return false;
     busy.value = true;
     try {
-      const updated = await saveDocuments(host, dirty.value, saveOrder.value);
+      if (onlyKey) checkSaveOnly(onlyKey);
+      const updated = await saveDocuments(host, dirty.value.filter(d => !onlyKey || d.ref.key === onlyKey), saveOrder.value);
       updated.forEach(doc => {
         documents[doc.ref.key] = doc;
       });
       history.value = [];
       future.value = [];
-      saveOrder.value = [];
+      saveOrder.value = saveOrder.value.filter(key => !updated.some(d => d.ref.key === key));
       error.value = '';
       notice.value = updated.some(d => d.ref.live) ? '已保存；使用中版本已应用' : '已保存';
+      return true;
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
+      return false;
     } finally {
       busy.value = false;
     }
@@ -214,6 +221,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     transfer,
     transferMany,
     save,
+    checkSaveOnly,
     discard,
   };
 });

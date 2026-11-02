@@ -5,6 +5,7 @@ import { NativeHost } from './native';
 import { installNativeMenus } from './bridge';
 import { useWorkbench } from './workbench';
 import { sameResource } from './quick-operations';
+import { installGroupRuntime } from './group-runtime';
 import type { Host, OpenRequest } from './types';
 
 function init() {
@@ -17,6 +18,7 @@ function init() {
   const app = createApp(App, { host }).use(pinia);
   const vm = app.mount(mount) as unknown as { open: (request: OpenRequest) => void };
   const open = (request: OpenRequest = {}) => vm.open(request);
+  const stopRuntime = host.demo ? () => {} : installGroupRuntime();
   const buttons: HTMLElement[] = [];
   const wand = document.querySelector('#extensionsMenu');
   if (wand) {
@@ -65,6 +67,7 @@ function init() {
       throw new Error('工坊里有这份资源的未保存修改，请先保存或放弃后再试');
   });
   const destroy = () => {
+    stopRuntime();
     cleanMenus();
     app.unmount();
     mount.remove();

@@ -92,12 +92,12 @@ fs.mkdirSync(out, { recursive: true });
         .filter({ has: page.getByRole('radio', { name: /^柏宝箱/ }) })
         .getByRole('checkbox', { name: '清理这份记录' })
         .check();
-      await dialog.getByRole('button', { name: '采用', exact: true }).click();
+      await dialog.getByRole('button', { name: '采用并保存', exact: true }).click();
       await page
         .getByRole('alertdialog', { name: '清理分组记录' })
         .getByRole('button', { name: '确定', exact: true })
         .click();
-      await page.getByRole('button', { name: /^保存 ·/ }).click();
+      await expect(dialog).toHaveCount(0);
       const saved = await page.evaluate(() => window.__PRW_DEMO_DATA__['preset:preset:春日来信']);
       assert.equal(saved.baibai, undefined);
       assert.equal(saved.raw.prompts.length, 7);
@@ -233,7 +233,7 @@ fs.mkdirSync(out, { recursive: true });
           row.dataset.regexScriptId = id;
           row.innerHTML =
             '<input type="checkbox" class="regex_bulk_checkbox" checked><div><button class="th-regex-copy-button">旧复制</button><button class="edit_existing_regex">编辑</button><button class="export_regex">导出</button><button class="delete_regex">删除</button></div>';
-          root.append(row);
+          document.querySelector(type === 'global' ? '#saved_regex_scripts' : '#saved_scoped_scripts').append(row);
         }
       });
       await native.locator('#regex_container .prw-row-more').first().waitFor();
@@ -267,24 +267,27 @@ fs.mkdirSync(out, { recursive: true });
     await quick.evaluate(() => {
       document.querySelector('#openai_settings').style.display='block';
       const list=document.querySelector('#completion_prompt_manager_list');
+      const bai=document.createElement('div');bai.className='bai-bai-preset-vue-list-host';list.before(bai);bai.append(list);
+      window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw.prompt_order[0].order[1].enabled=false;
       for(const id of ['a0','a1','a2']) {
         const row=document.createElement('li');row.className='completion_prompt_manager_prompt';row.dataset.pmIdentifier=id;
         row.innerHTML='<span class="completion_prompt_manager_prompt_name">'+id+'</span><span class="prompt_manager_prompt_controls"></span>';list.append(row);
       }
+      window.__PRW_ORIGINAL_ROW__=list.firstElementChild;
       const regex=document.querySelector('#regex_container');regex.style.display='block';
       for(const id of ['r1','r2']) {
         const row=document.createElement('div');row.className='regex-script-label';row.id=id;row.dataset.regexScriptId=id;row.dataset.regexType='global';
-        row.innerHTML='<span class="regex_script_name">'+id+'</span><div><button class="edit_existing_regex">编辑</button><button class="delete_regex">删除</button></div>';regex.append(row);
+        row.innerHTML='<span class="regex_script_name">'+id+'</span><div><button class="edit_existing_regex">编辑</button><button class="delete_regex">删除</button></div>';document.querySelector('#saved_regex_scripts').append(row);
       }
     });
-    await quick.locator('#r1 .prw-row-more').waitFor();
+    await quick.locator('[data-regex-script-id="r1"]:visible .prw-row-more').waitFor();
     await check('原生复制默认在自身下方，选分组复制和移动均不打开对比界面', async () => {
-      await quick.locator('#r1 .prw-row-more').click();
+      await quick.locator('[data-regex-script-id="r1"]:visible .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'复制',exact:true}).click();
       await quick.waitForFunction(()=>window.__PRW_DEMO_DATA__['regex:global'].raw.length===5);
       let raw=await quick.evaluate(()=>window.__PRW_DEMO_DATA__['regex:global'].raw);
       assert.equal(raw[0].id,'r1');assert.equal(raw[1].scriptName,'折叠思考（副本）');assert.equal(raw[1].disabled,true);assert.equal(raw[2].id,'r2');
-      await quick.locator('#r1 .prw-row-more').click();
+      await quick.locator('[data-regex-script-id="r1"]:visible .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'复制到…',exact:true}).click();
       await quick.getByRole('dialog',{name:'复制到',exact:true}).getByRole('button',{name:'选择全局正则分组',exact:true}).click();
       await quick.getByRole('dialog',{name:'复制到',exact:true}).getByRole('button',{name:'显示整理',exact:true}).click();
@@ -292,20 +295,20 @@ fs.mkdirSync(out, { recursive: true });
       const grouped=await quick.evaluate(()=>window.__PRW_DEMO_DATA__['regex:global']);
       const newRegex=grouped.raw.find(r=>r.scriptName==='折叠思考（副本） 2');
       assert.equal(grouped.baibai.scripts[newRegex.id].groupId,'rg');
-      await quick.locator('#r2 .prw-row-more').click();
+      await quick.locator('[data-regex-script-id="r2"]:visible .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'移动到…',exact:true}).click();
       await quick.getByRole('dialog',{name:'移动到',exact:true}).getByRole('button',{name:'角色 · 芙林',exact:true}).click();
       await quick.waitForFunction(()=>window.__PRW_DEMO_DATA__['regex:scoped:demo.png'].raw.length===2);
       assert.equal(await quick.evaluate(()=>window.__PRW_DEMO_DATA__['regex:global'].raw.some(r=>r.id==='r2')),false);
       assert.equal(await quick.locator('#prw-panel').count(),0);
-      const icon=await quick.locator('#r1 .prw-row-more').evaluate(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,margin:getComputedStyle(e).margin,svg:!!e.querySelector('svg')}));
+      const icon=await quick.locator('[data-regex-script-id="r1"]:visible .prw-row-more').evaluate(e=>({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,margin:getComputedStyle(e).margin,svg:!!e.querySelector('svg')}));
       assert.deepEqual(icon,{width:28,height:28,margin:'0px',svg:true});
     });
     await check('原生分组先选起点再选终点，就地命名并保留另一份分组', async () => {
-      await quick.locator('[data-pm-identifier="a0"] .prw-row-more').click();
+      await quick.locator('[data-pm-identifier="a0"]:visible .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'分组',exact:true}).click();
       assert.equal(await quick.locator('.prw-range-start').count(),1);
-      await quick.locator('[data-pm-identifier="a2"] .prw-row-more').click();
+      await quick.locator('[data-pm-identifier="a2"]:visible .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'设为终点',exact:true}).click();
       const naming=quick.getByRole('dialog',{name:'建立分组',exact:true});
       await naming.getByRole('combobox',{name:'分组方案',exact:true}).selectOption('baibai');
@@ -317,17 +320,58 @@ fs.mkdirSync(out, { recursive: true });
       assert.ok(saved.transfer?.length);assert.equal(await quick.locator('#prw-panel').count(),0);
       assert.equal(await quick.locator('.prw-range-start').count(),0);
       await quick.getByRole('button',{name:'折叠 就地分组',exact:true}).click();
-      await expect(quick.locator('[data-pm-identifier="a0"]')).toBeHidden();
+      await expect(quick.locator('.prw-native-group-mount [data-pm-identifier="a0"]')).toBeHidden();
       await quick.getByRole('button',{name:'展开 就地分组',exact:true}).click();
-      await expect(quick.locator('[data-pm-identifier="a0"]')).toBeVisible();
+      await expect(quick.locator('.prw-native-group-mount [data-pm-identifier="a0"]')).toBeVisible();
+    });
+    await check('柏宝箱原节点保留，原生分组呈现未挂载条目且组暂停不改条目开关', async () => {
+      const mount=quick.locator('.prw-native-group-mount[data-resource-key="preset:preset:春日来信"]');
+      await expect(mount.locator('.prw-native-row')).toHaveCount(6);
+      await expect(quick.locator('#completion_prompt_manager_list')).toBeHidden();
+      assert.equal(await quick.evaluate(()=>document.querySelector('#completion_prompt_manager_list').firstElementChild===window.__PRW_ORIGINAL_ROW__),true);
+      const before=await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw));
+      await mount.getByRole('button',{name:'暂停 就地分组',exact:true}).click();
+      await expect(mount.getByRole('button',{name:'启用 就地分组',exact:true})).toBeVisible();
+      assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw)),before);
+      await expect(mount.getByRole('button',{name:'开启 世界细节',exact:true})).toBeVisible();
+      for(const width of [1440,390,320]) {
+        await quick.setViewportSize({width,height:1000});
+        const bounds=await mount.evaluate(e=>({right:e.getBoundingClientRect().right,width:document.documentElement.scrollWidth}));
+        assert.ok(bounds.right<=width&&bounds.width<=width,JSON.stringify(bounds));
+        await quick.screenshot({path:path.join(out,`native-groups-${width}.png`),fullPage:true});
+      }
+      await quick.setViewportSize({width:1440,height:1000});
+      await mount.getByRole('button',{name:'启用 就地分组',exact:true}).click();
+      await expect(mount.getByRole('button',{name:'暂停 就地分组',exact:true})).toBeVisible();
+      assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw)),before);
+      const regexMount=quick.locator('.prw-native-group-mount[data-resource-key="regex:global"]');
+      const regexBefore=await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw));
+      await regexMount.getByRole('button',{name:'暂停 显示整理',exact:true}).click();
+      await expect(regexMount.getByRole('button',{name:'启用 显示整理',exact:true})).toBeVisible();
+      assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw)),regexBefore);
+      await regexMount.getByRole('button',{name:'启用 显示整理',exact:true}).click();
+      await expect(regexMount.getByRole('button',{name:'暂停 显示整理',exact:true})).toBeVisible();
+      assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw)),regexBefore);
+    });
+    await check('工坊原生分组列表支持多选复制，成功后清空勾选',async()=>{
+      const mount=quick.locator('.prw-native-group-mount[data-resource-key="regex:global"]');
+      await mount.getByRole('checkbox',{name:'选择 折叠思考',exact:true}).check();
+      await mount.getByRole('checkbox',{name:'选择 称呼替换',exact:true}).check();
+      const count=await quick.evaluate(()=>window.__PRW_DEMO_DATA__['regex:global'].raw.length);
+      await mount.locator('[data-regex-script-id="r1"] .prw-row-more').click();
+      await quick.getByRole('menuitem',{name:'复制 · 2 条',exact:true}).click();
+      await quick.waitForFunction(n=>window.__PRW_DEMO_DATA__['regex:global'].raw.length===n+2,count);
+      await expect(mount.locator('.prw-native-selection:checked')).toHaveCount(0);
+      await expect(quick.locator('#saved_regex_scripts .regex_bulk_checkbox:checked')).toHaveCount(0);
+      await expect(quick.locator('#prw-panel')).toHaveCount(0);
     });
     await check('原生删除也需要就地确认，重新打开工坊读取最新数据', async () => {
-      await quick.locator('[data-pm-identifier="a1"] .prw-row-more').click();
+      await quick.locator('.prw-native-group-mount [data-pm-identifier="a1"] .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'删除…',exact:true}).click();
       let confirmation=quick.getByRole('dialog',{name:'删除条目',exact:true});
       await confirmation.getByRole('button',{name:'取消',exact:true}).click();
       assert.ok(await quick.evaluate(()=>window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw.prompts.some(e=>e.identifier==='a1')));
-      await quick.locator('[data-pm-identifier="a1"] .prw-row-more').click();
+      await quick.locator('.prw-native-group-mount [data-pm-identifier="a1"] .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'删除…',exact:true}).click();
       await confirmation.getByRole('button',{name:'确定',exact:true}).click();
       await quick.waitForFunction(()=>!window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw.prompts.some(e=>e.identifier==='a1'));
@@ -339,14 +383,21 @@ fs.mkdirSync(out, { recursive: true });
       await quick.getByRole('button',{name:'关闭',exact:true}).click();
       await quick.setViewportSize({width:320,height:844});
       await quick.addStyleTag({content:'.menu_button{margin:5px 0;line-height:50px;width:min-content}'});
-      await quick.locator('#r1 .prw-row-more').click();
+      await quick.locator('[data-regex-script-id="r1"]:visible .prw-row-more').click();
       await quick.getByRole('menuitem',{name:'复制到…',exact:true}).click();
       const rect=await quick.locator('.prw-quick-dialog').evaluate(e=>e.getBoundingClientRect().toJSON());
       assert.ok(rect.left>=0&&rect.right<=320,JSON.stringify(rect));
-      const centered=await quick.locator('#r1 .prw-row-more').evaluate(e=>{const a=e.getBoundingClientRect(),b=e.querySelector('svg').getBoundingClientRect();return Math.abs((a.top+a.bottom)/2-(b.top+b.bottom)/2)<1});
+      const centered=await quick.locator('[data-regex-script-id="r1"]:visible .prw-row-more').evaluate(e=>{const a=e.getBoundingClientRect(),b=e.querySelector('svg').getBoundingClientRect();return Math.abs((a.top+a.bottom)/2-(b.top+b.bottom)/2)<1});
       assert.ok(centered);
       await quick.screenshot({path:path.join(out,'native-quick-mobile-320.png'),fullPage:true});
       await quick.getByRole('button',{name:'关闭快捷操作',exact:true}).click();
+    });
+    await check('原生分组卸载恢复原节点且停止观察', async () => {
+      await quick.evaluate(()=>window.__PRW__.destroy());
+      await expect(quick.locator('.prw-native-group-mount')).toHaveCount(0);
+      await expect(quick.locator('#completion_prompt_manager_list')).toBeVisible();
+      assert.equal(await quick.evaluate(()=>document.querySelector('#completion_prompt_manager_list').firstElementChild===window.__PRW_ORIGINAL_ROW__),true);
+      await expect(quick.locator('.prw-native-original,.prw-row-more')).toHaveCount(0);
     });
     await quick.close();
     for (const width of [390, 320]) {

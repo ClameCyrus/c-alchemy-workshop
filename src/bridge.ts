@@ -1,13 +1,11 @@
-import type { Group, Host, OpenRequest, Resource } from './types';
+import type { Host, OpenRequest, Resource } from './types';
+import { installNativeGroupViews } from './native-groups';
 import { createQuickUI } from './quick-ui';
 import type { QuickSource } from './quick-operations';
 
 export function installNativeMenus(host: Host, open: (request: OpenRequest) => void, guard: (ref: Resource) => void = () => {}): () => void {
-  const groupCache = new Map<string, Group[]>(), loadingGroups = new Set<string>();
-  let disposed = false, groupEpoch = 0;
-  const quick = createQuickUI(host, guard, refs => {
-    groupEpoch++; loadingGroups.clear(); refs.forEach(ref => groupCache.delete(ref.key)); scan();
-  });
+  let groups: ReturnType<typeof installNativeGroupViews> | undefined;
+  const quick = createQuickUI(host, guard, refs => groups?.invalidate(refs));
   const abort = new AbortController(),
     signal = abort.signal;
   let menu: HTMLDivElement | undefined;
@@ -15,7 +13,13 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     menu?.remove();
     menu = undefined;
   }
+  function editResource(ref: Resource, id: string) {
+    const fallback = () => open({ kind: ref.kind, refKey: ref.key, entryId: id, action: 'edit' });
+    if (!host.edit) { fallback(); return; }
+    void host.edit(ref, id).then(handled => { if (handled === false) fallback(); }).catch(quick.fail);
+  }
   const currentRef = (row: HTMLElement, kind: 'preset' | 'regex', resources = host.resources(kind)): Resource | undefined => {
+    if (row.dataset.prwRefKey) return resources.find(r => r.key === row.dataset.prwRefKey && (!row.dataset.prwRefName || r.name === row.dataset.prwRefName));
     if (kind === 'preset') return resources.find(r => r.live) || (host.demo ? resources[0] : undefined);
     const type =
       row.dataset.regexType ||
@@ -29,10 +33,10 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     const map = new Map<string, string[]>();
     const resources = host.resources('regex');
     for (const checkbox of document.querySelectorAll<HTMLInputElement>(
-      '#regex_container .regex_bulk_checkbox:checked',
+      '#regex_container .regex_bulk_checkbox:checked,#regex_container .prw-native-selection:checked',
     )) {
-      const row = checkbox.closest<HTMLElement>('.regex-script-label');
-      if (!row) continue;
+      const row = checkbox.closest<HTMLElement>('.regex-script-label,.prw-native-row');
+      if (!row || row.closest('.prw-native-original')) continue;
       const resource = currentRef(row, 'regex', resources),
         id = row.dataset.regexScriptId || row.id;
       if (!resource || !id) continue;
@@ -78,26 +82,26 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
       });
       menu!.append(button);
     };
-    const request = (action: OpenRequest['action']) =>
-      open({ kind, refKey: sourceKey, entryId: id, ids: ids.includes(id) ? ids : [id], sources, action });
-    const original = (selector: string) => () => row.querySelector<HTMLElement>(selector)?.click();
-    const edit = row.querySelector<HTMLElement>(
+    const originalRoot = document.querySelector(kind === 'preset' ? '#completion_prompt_manager_list' : ref.scope === 'global' ? '#saved_regex_scripts' : ref.scope === 'scoped' ? '#saved_scoped_scripts' : '#saved_preset_scripts');
+    const originalRow = [...originalRoot?.querySelectorAll<HTMLElement>('[data-pm-identifier],.regex-script-label') || []].find(e => (e.dataset.pmIdentifier || e.dataset.regexScriptId || e.id) === id) || row;
+    const original = (selector: string) => () => originalRow.querySelector<HTMLElement>(selector)?.click();
+    const edit = originalRow.querySelector<HTMLElement>(
       kind === 'regex' ? '.edit_existing_regex' : '.prompt-manager-edit-action,[data-preset-prompt-action="edit"]',
     );
-    add('编辑', edit ? () => edit.click() : () => request('edit'));
+    add('编辑', edit ? () => edit.click() : () => editResource(ref, id));
     add(total > 1 ? `复制 · ${total} 条` : '复制', () => quick.transfer(quickSources, 'copy', false, trigger));
     add(total > 1 ? `复制到… · ${total} 条` : '复制到…', () => quick.transfer(quickSources, 'copy', true, trigger));
     add(total > 1 ? `移动到… · ${total} 条` : '移动到…', () => quick.transfer(quickSources, 'move', true, trigger));
     add(quick.isRange(ref) ? '设为终点' : '分组', () => quick.group(ref, id, trigger));
-    if (kind === 'regex' && row.querySelector('.export_regex')) add('导出', original('.export_regex'));
+    if (kind === 'regex' && originalRow.querySelector('.export_regex')) add('导出', original('.export_regex'));
     if (kind === 'preset') {
-      if (row.querySelector('[data-preset-prompt-action="favorite"]'))
+      if (originalRow.querySelector('[data-preset-prompt-action="favorite"]'))
         add('收藏', original('[data-preset-prompt-action="favorite"]'));
-      if (row.querySelector('[data-preset-prompt-action="global-library"]'))
+      if (originalRow.querySelector('[data-preset-prompt-action="global-library"]'))
         add('添加到全局库', original('[data-preset-prompt-action="global-library"]'));
-      add('从列表移除', () => quick.erase(ref, id, true, row.querySelector('.completion_prompt_manager_prompt_name')?.textContent?.trim() || id, trigger));
+      add('从列表移除', () => quick.erase(ref, id, true, row.querySelector('.completion_prompt_manager_prompt_name,.item-name')?.textContent?.trim() || id, trigger));
     }
-    add('删除…', () => quick.erase(ref, id, false, row.querySelector('.regex_script_name,.completion_prompt_manager_prompt_name')?.textContent?.trim() || id, trigger), true);
+    add('删除…', () => quick.erase(ref, id, false, row.querySelector('.regex_script_name,.completion_prompt_manager_prompt_name,.item-name')?.textContent?.trim() || id, trigger), true);
     menu.addEventListener('pointerdown', e => e.stopPropagation());
     (trigger.closest('#regex_container') || document.body).append(menu);
     menu.showPopover();
@@ -163,52 +167,8 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
       toolbar.insertBefore(button, document.querySelector('#bulk_export_regex'));
       document.querySelector('#regex_container')?.classList.add('prw-bulk-ready');
     }
-    renderOwnGroups();
-  }
-  function renderOwnGroups() {
-    const scopes = new Map<string, { ref: Resource; root: HTMLElement; rows: HTMLElement[] }>();
-    const resources: Partial<Record<'preset' | 'regex', Resource[]>> = {};
-    for (const row of document.querySelectorAll<HTMLElement>('.prw-enhanced-preset,.prw-enhanced-regex')) {
-      if (row.closest('.bai-bai-regex-vue-list,.bai-bai-preset-vue-list-host')) continue;
-      const kind = row.classList.contains('prw-enhanced-preset') ? 'preset' : 'regex';
-      const ref = currentRef(row, kind, resources[kind] ||= host.resources(kind));
-      const root = row.closest<HTMLElement>(kind === 'preset' ? '#completion_prompt_manager_list' : '#saved_regex_scripts,#saved_scoped_scripts,#saved_preset_scripts') || row.parentElement;
-      if (!ref || !root) continue;
-      const scope = scopes.get(ref.key) || { ref, root, rows: [] };
-      scope.rows.push(row); scopes.set(ref.key, scope);
-    }
-    for (const [key, scope] of scopes) {
-      if (!groupCache.has(key)) {
-        if (!loadingGroups.has(key)) {
-          loadingGroups.add(key);
-          const epoch = groupEpoch;
-          void host.load(scope.ref).then(snapshot => {
-            if (!disposed && epoch === groupEpoch) { groupCache.set(key, snapshot.own?.groups || []); renderOwnGroups(); }
-          }).catch(error => {
-            if (epoch === groupEpoch) groupCache.set(key, []);
-            console.warn('[Cの炼金工坊] 读取原生分组失败', error);
-          }).finally(() => { if (epoch === groupEpoch) loadingGroups.delete(key); });
-        }
-        continue;
-      }
-      const groups = groupCache.get(key)!;
-      const hidden = new Set(groups.filter(g => g.collapsed).flatMap(g => g.members));
-      for (const row of scope.rows) row.classList.toggle('prw-own-hidden', hidden.has(row.dataset.pmIdentifier || row.dataset.regexScriptId || row.id));
-      let bar = [...scope.root.querySelectorAll<HTMLElement>('.prw-own-groups')].find(e => e.dataset.resourceKey === key);
-      if (!groups.length) { bar?.remove(); continue; }
-      const fingerprint = JSON.stringify(groups);
-      if (bar?.dataset.fingerprint === fingerprint) continue;
-      bar?.remove(); bar = document.createElement(scope.root.tagName === 'UL' || scope.root.tagName === 'OL' ? 'li' : 'div');
-      bar.className = 'prw-own-groups'; bar.dataset.resourceKey = key; bar.dataset.fingerprint = fingerprint;
-      for (const group of groups) {
-        const button = document.createElement('button'); button.type = 'button';
-        button.textContent = `${group.collapsed ? '▸' : '▾'} ${group.name} · ${group.members.length}`;
-        button.setAttribute('aria-label', `${group.collapsed ? '展开' : '折叠'} ${group.name}`);
-        button.addEventListener('click', event => { event.stopPropagation(); quick.collapse(scope.ref, group.id); }, { signal });
-        bar.append(button);
-      }
-      scope.root.prepend(bar);
-    }
+    groups?.scan();
+    document.dispatchEvent(new Event('prw:runtime-sync'));
   }
   let scheduled = false;
   const observer = new MutationObserver(() => {
@@ -223,6 +183,12 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     const root = document.querySelector(selector);
     if (root) observer.observe(root, { subtree: true, childList: true });
   }
+  groups = installNativeGroupViews(host, {
+    more: show, fold: (ref, id) => quick.collapse(ref, id),
+    enable: (ref, id, enabled) => quick.groupEnabled(ref, id, enabled),
+    entry: (ref, id, enabled) => quick.entryEnabled(ref, id, enabled),
+    edit: editResource,
+  });
   scan();
   document.addEventListener(
     'pointerdown',
@@ -250,11 +216,11 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     events = ['OAI_PRESET_CHANGED_AFTER', 'CHAT_CHANGED', 'MAIN_API_CHANGED']
       .map(k => c?.eventTypes[k])
       .filter(Boolean);
-  const invalidate = () => { close(); quick.reset(); groupEpoch++; groupCache.clear(); loadingGroups.clear(); scan(); };
+  const invalidate = () => { close(); quick.reset(); groups?.invalidate(); scan(); };
   for (const event of events) c.eventSource.on(event, invalidate);
   return () => {
     close();
-    disposed = true;
+    groups?.destroy();
     quick.destroy();
     abort.abort();
     observer.disconnect();

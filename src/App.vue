@@ -340,6 +340,7 @@ async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
     if (!name) return;
     state.change(() => {
       const id = uid();
+      doc.state.native = true;
       doc.state.groups.push({ id, name, members: [], collapsed: false, enabled: true });
       assignGroup(doc, ids, id);
     });
@@ -471,6 +472,7 @@ async function createEntry(doc: WorkDocument) {
   edit.value = { docKey: doc.ref.key, value: clone(entry) };
 }
 function openGroups(doc: WorkDocument) {
+  error.value = '';
   doc.sources = [
     { provider: 'own', label: '工坊', groups: clone(doc.state.groups), raw: doc.snapshot.own },
     ...doc.sources.filter(s => s.provider !== 'own'),
@@ -482,6 +484,9 @@ function openGroups(doc: WorkDocument) {
 }
 async function applyGroups() {
   const doc = state.documents[groupDialog.value!];
+  if (!doc || state.busy) return;
+  try { state.checkSaveOnly(doc.ref.key); }
+  catch (e) { error.value = e instanceof Error ? e.message : String(e); return; }
   const selectedSource = doc.sources.find(s => s.provider === chosenProvider.value);
   const seen = new Set<string>(),
     overlapping = new Set<string>();
@@ -517,9 +522,10 @@ async function applyGroups() {
       ...new Set([...doc.state.suppressed.filter(p => !syncProviders.value.includes(p)), ...clearProviders.value]),
     ];
     doc.state.sync = syncProviders.value.filter(p => !clearProviders.value.includes(p));
+    doc.state.native = true;
     doc.dirty = true;
   });
-  groupDialog.value = null;
+  if (!state.error && await state.save(doc.ref.key)) groupDialog.value = null;
 }
 async function groupAction(doc: WorkDocument, id: string, action: 'rename' | 'remove') {
   const group = doc.state.groups.find(g => g.id === id);
@@ -649,7 +655,7 @@ onBeforeUnmount(() => {
           <button aria-label="外观" title="外观" @click="appearanceDialog = true">◐</button>
           <button class="history-action" :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button
           ><button class="history-action" :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button
-          ><button class="primary" :disabled="!dirty.length || busy" @click="state.save">
+          ><button class="primary" :disabled="!dirty.length || busy" @click="state.save()">
             {{ busy ? '保存中…' : dirty.length ? `保存 · ${dirty.length}` : '已保存' }}</button
           ><button aria-label="关闭" title="关闭" @click="close">✕</button>
         </div>
@@ -818,6 +824,7 @@ onBeforeUnmount(() => {
                   >
                     {{ g.name }} <small>{{ g.members.length }}</small>
                   </button>
+                  <button :aria-label="`${g.enabled ? '暂停' : '启用'} ${g.name}`" :title="g.enabled ? '暂停本组，保留条目开关' : '启用本组，保留条目开关'" @click="state.change(() => { g.enabled = !g.enabled; docs[side].state.native = true; docs[side].dirty = true; })">{{ g.enabled ? '暂停' : '启用' }}</button>
                   <details>
                     <summary aria-label="分组操作">⋯</summary>
                     <div class="small-menu">
@@ -1130,7 +1137,8 @@ onBeforeUnmount(() => {
             >
           </div>
           <footer>
-            <button @click="groupDialog = null">取消</button><button class="primary" @click="applyGroups">采用</button>
+            <span v-if="error" class="error" role="alert">{{ error }}</span>
+            <button :disabled="state.busy" @click="groupDialog = null">取消</button><button class="primary" :disabled="state.busy" @click="applyGroups">{{ state.busy ? '保存中…' : '采用并保存' }}</button>
           </footer>
         </section>
       </div>

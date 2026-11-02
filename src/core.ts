@@ -37,6 +37,7 @@ const GroupSchema = z.object({
 });
 const StateSchema = z.object({
   version: z.literal(1).default(1),
+  native: z.boolean().optional(),
   groups: z.array(GroupSchema).default([]),
   sync: z.array(z.enum(['baibai', 'transfer'])).default([]),
   suppressed: z.array(z.enum(['baibai', 'transfer'])).default([]),
@@ -153,7 +154,10 @@ export function makeDocument(ref: Resource, snapshot: Snapshot): WorkDocument {
   if (snapshot.own) sources.push({ provider: 'own', label: '工坊', groups: clone(state.groups), raw: snapshot.own });
   for (const provider of ['baibai', 'transfer'] as const) {
     const groups = sourceGroups(provider, snapshot[provider], ids, ref.kind, ref.scope);
-    if (groups.length)
+    const records = snapshot[provider];
+    const orphanGlobal = provider === 'transfer' && ref.kind === 'regex' && ref.scope === 'global' &&
+      (Array.isArray(records) ? records : records?.groups || []).some((g: Raw) => (g.scope || 'global') === 'global');
+    if (groups.length || orphanGlobal || (provider === 'baibai' && records !== undefined))
       sources.push({
         provider,
         label: provider === 'baibai' ? '柏宝箱' : '预设转移工具',
@@ -175,14 +179,13 @@ export function makeDocument(ref: Resource, snapshot: Snapshot): WorkDocument {
 }
 export function rawEntry(entry: Entry, kind: Resource['kind']): Raw {
   return kind === 'regex'
-    ? { ...clone(entry.raw), id: entry.id, scriptName: entry.name, disabled: !entry.enabled }
+    ? { ...clone(entry.raw), id: entry.id, scriptName: entry.name, ...(entry.enabled === !entry.raw.disabled ? {} : { disabled: !entry.enabled }) }
     : {
         ...clone(entry.raw),
         identifier: entry.id,
         name: entry.name,
         content: entry.content,
         role: entry.role,
-        enabled: entry.enabled,
       };
 }
 function portableGroups(doc: WorkDocument): any {
@@ -241,6 +244,7 @@ export function transformTransfer(doc: WorkDocument, current: any, clear = false
   );
   const source = Array.isArray(current) ? current : current?.groups || [];
   const untouched = source
+    .filter((g: Raw) => !(clear && doc.ref.scope === 'global' && (g.scope || 'global') === 'global'))
     .map((g: Raw) => {
       if ((g.scope || 'global') !== doc.ref.scope) return clone(g);
       return { ...clone(g), memberIds: (g.memberIds || g.members || []).filter((id: string) => !relevant.has(id)) };
@@ -313,6 +317,9 @@ export function serialize(doc: WorkDocument): Snapshot {
 }
 export function protectedEntry(entry: Entry): boolean {
   return !!(entry.raw.system_prompt || entry.raw.marker);
+}
+export function pausedMembers(state?: { groups?: Group[] }): Set<string> {
+  return new Set((state?.groups || []).filter(g => g.enabled === false).flatMap(g => g.members));
 }
 export function groupOf(doc: WorkDocument, id: string): Group | undefined {
   return doc.state.groups.find(g => g.members.includes(id));

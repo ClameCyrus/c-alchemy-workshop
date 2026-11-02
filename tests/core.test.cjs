@@ -12,6 +12,10 @@ require.extensions['.ts'] = (module, filename) =>
 const core = require('../src/core.ts');
 const { NativeHost, saveDocuments } = require('../src/native.ts');
 const { QuickOperations } = require('../src/quick-operations.ts');
+const { gateRegexFlag, gatePromptCollection, nativeRegexRead, installGroupRuntime } = require('../src/group-runtime.ts');
+const { nativeModel } = require('../src/native-model.ts');
+const { createPinia, setActivePinia } = require('pinia');
+const { useWorkbench } = require('../src/workbench.ts');
 
 function quickHarness(refs, snapshots, guard) {
   const data = clone(snapshots);
@@ -187,21 +191,38 @@ test('分组取舍清理只删除元数据，保留条目和备份并抑制重�
   doc.snapshot = saved;
   assert.equal(serialize(doc).baibai, undefined);
 });
-test('清理转移工具正则组保留其他资源成员与其他范围', () => {
+test('清理转移工具全局正则组包含孤立记录，保留其他范围和备份', () => {
   const doc = makeDocument(ref('A', 'regex', 'global'), {
     raw: [regex('r')],
     transfer: {
       version: 2,
       groups: [
         { id: 'mixed', name: '混合', scope: 'global', memberIds: ['r', 'other'] },
+        { id: 'orphan', name: '已删条目', scope: 'global', memberIds: ['missing'] },
         { id: 'char', name: '角色', scope: 'scoped', memberIds: ['r'] },
+        { id: 'preset', name: '预设', scope: 'preset', memberIds: ['r'] },
       ],
     },
   });
   doc.cleanup = ['transfer'];
   const saved = serialize(doc);
-  assert.deepEqual(saved.transfer.groups[0].memberIds, ['other']);
-  assert.deepEqual(saved.transfer.groups[1].memberIds, ['r']);
+  assert.deepEqual(saved.transfer.groups.map(g => g.id), ['char', 'preset']);
+  assert.deepEqual(saved.raw, doc.snapshot.raw);
+  assert.deepEqual(saved.own.backups[0].data, doc.snapshot.transfer);
+  const orphan=makeDocument(ref('O','regex','global'),{raw:[regex('r')],transfer:{version:2,groups:[{id:'stale',scope:'global',memberIds:['missing']}]}});
+  assert.equal(orphan.sources.find(s=>s.provider==='transfer').groups.length,0);
+  orphan.cleanup=['transfer'];assert.deepEqual(serialize(orphan).transfer.groups,[]);
+});
+
+test('清理非全局转移工具记录仅移除当前资源成员', () => {
+  const doc = makeDocument(ref('A', 'regex', 'preset'), {raw:[regex('r')],transfer:{version:2,groups:[
+    {id:'mixed',name:'混合',scope:'preset',memberIds:['r','other']},
+    {id:'orphan',name:'其他预设',scope:'preset',memberIds:['missing']},
+    {id:'global',name:'全局',scope:'global',memberIds:['r']},
+  ]}});
+  doc.cleanup=['transfer'];
+  const saved=serialize(doc);
+  assert.deepEqual(saved.transfer.groups.map(g=>g.memberIds),[['other'],['missing'],['r']]);
 });
 test('旧起止分组兼容、反向范围包含两端、移除保留未加入条目', () => {
   const doc = makeDocument(ref('A'), {
@@ -329,7 +350,8 @@ test('原生适配器独立保存三类正则，保留当前未保存正文与�
     },
   };
   global.window = { SillyTavern: { getContext: () => c } };
-  global.localStorage = { setItem() {} };
+  const storage = new Map();
+  global.localStorage = { setItem(key,value) { storage.set(key,value); } };
   global.document = { querySelector: () => null };
   const host = new NativeHost(async path =>
     path === '/script.js'
@@ -378,6 +400,18 @@ test('原生适配器独立保存三类正则，保留当前未保存正文与�
     assert.deepEqual(c.extensionSettings.presetTransfer.regexScriptGroupings.groups[0].memberIds,['g',newId]);
     assert.equal(live.prompts[0].content,'当前未保存正文');
     assert.equal(chatEvents,0);
+    c.extensionSettings.presetTransfer.regexScriptGroupings.groups.push(
+      {id:'orphan',name:'已删条目',scope:'global',memberIds:['missing']},
+      {id:'preset',name:'其他预设',scope:'preset',memberIds:['missing']});
+    const cleanup=makeDocument(globalRef,await host.load(globalRef)),rawBefore=clone(cleanup.snapshot.raw);
+    cleanup.cleanup=['transfer'];cleanup.state.suppressed=['transfer'];cleanup.state.native=true;
+    cleanup.state.groups=clone(cleanup.sources.find(s=>s.provider==='baibai').groups);cleanup.state.sync=['baibai'];cleanup.dirty=true;
+    const [reloaded]=await saveDocuments(host,[cleanup]);
+    assert.deepEqual(c.extensionSettings.presetTransfer.regexScriptGroupings.groups.map(g=>g.id),['preset']);
+    assert.deepEqual(JSON.parse(storage.get('preset-transfer-regex-script-groupings-v2')),c.extensionSettings.presetTransfer.regexScriptGroupings);
+    assert.equal(reloaded.sources.some(s=>s.provider==='transfer'),false);
+    assert.deepEqual(c.extensionSettings.regex,rawBefore);
+    assert.equal(reloaded.state.backups.at(-1).data.groups.some(g=>g.id==='orphan'),true);
   } finally {
     delete global.window;
     delete global.localStorage;
@@ -439,4 +473,106 @@ test('原生快捷操作遇到未保存草稿、失效条目或切换资源时�
   assert.equal(h.commits(),0);assert.deepEqual(h.data[r.key],snapshot);
   await assert.rejects(()=>h.operations.erase(r,['missing']),/不存在/);
   await assert.rejects(()=>h.operations.load({...r,name:'changed'}),/切换/);
+});
+
+test('预设与三类正则暂停整组不改条目开关，恢复后保留手动修改', async () => {
+  for (const r of [ref('P'),ref('G','regex','global'),ref('C','regex','scoped'),ref('R','regex','preset')]) {
+    const raw=r.kind==='preset'?preset([prompt('a'),prompt('b')]):[regex('a'),{...regex('b'),disabled:true}];
+    if(r.kind==='preset')raw.prompt_order[0].order[1].enabled=false;
+    const h=quickHarness([r],{[r.key]:{raw,own:{version:1,groups:[{id:'g',name:'组',members:['a','b'],enabled:true}]}}});
+    await h.operations.groupEnabled(r,'g',false);
+    assert.deepEqual(h.data[r.key].raw,raw);
+    assert.deepEqual([...core.pausedMembers(h.data[r.key].own)],['a','b']);
+    const model=nativeModel(r,h.data[r.key]);
+    assert.deepEqual(model.entries.map(e=>e.enabled),[true,false]);
+    await h.operations.groupEnabled(r,'g',true);
+    assert.deepEqual(h.data[r.key].raw,raw);
+    assert.equal(core.pausedMembers(h.data[r.key].own).size,0);
+    await h.operations.groupEnabled(r,'g',false);
+    await h.operations.entryEnabled(r,'a',false);
+    await h.operations.groupEnabled(r,'g',true);
+    assert.deepEqual(nativeModel(r,h.data[r.key]).entries.map(e=>e.enabled),[false,false]);
+  }
+});
+
+test('运行时正则遮罩只影响执行读取，序列化和显式开关保留原值并可卸载', () => {
+  const r=regex('r'),before=clone(r);let executing=false,paused=true;
+  const restore=gateRegexFlag(r,()=>paused,()=>executing);
+  assert.equal(r.disabled,false);assert.deepEqual(clone(r),before);
+  executing=true;assert.equal(r.disabled,true);
+  paused=false;assert.equal(r.disabled,false);
+  r.disabled=true;paused=true;assert.equal(r.disabled,true);
+  paused=false;assert.equal(r.disabled,true);
+  r.disabled=false;executing=false;assert.deepEqual(clone(r),before);
+  restore();assert.deepEqual(Object.getOwnPropertyDescriptor(r,'disabled'),Object.getOwnPropertyDescriptor(before,'disabled'));
+  const missing={id:'missing'};const cleanup=gateRegexFlag(missing,()=>true,()=>false);cleanup();assert.deepEqual(missing,{id:'missing'});
+  assert.equal(nativeRegexRead('Error\n at runRegexScript (http://localhost/scripts/extensions/regex/engine.js:1:1)'),true);
+  assert.equal(nativeRegexRead('Error\n at JSON.stringify (<anonymous>)\n at runRegexScript (http://localhost/scripts/extensions/regex/engine.js:1:1)'),false);
+  assert.equal(nativeRegexRead('Error\n at runRegexScript (http://localhost/other.js:1:1)'),false);
+});
+
+test('暂停提示词从执行集合排除且不可被系统提示词重新加入', () => {
+  const source=[{identifier:'a',content:'A'},{identifier:'b',content:'B'}],before=clone(source);
+  const c={collection:[...source],add(...p){this.collection.push(...p)},set(p,i){this.collection[i]=p},override(p,i){this.set(p,i)}};
+  gatePromptCollection(c,new Set(['a']));
+  assert.deepEqual(c.collection,[source[1]]);
+  c.add(source[0],{identifier:'c'});c.set(source[0],0);c.override(source[0],0);
+  assert.deepEqual(c.collection.map(p=>p.identifier),['b','c']);assert.deepEqual(source,before);
+  class P {constructor(){this.identifier='main';this.content='不得生效';}}
+  const main=new P(),anchored={collection:[main],add(...p){this.collection.push(...p)},set(p,i){this.collection[i]=p}};
+  gatePromptCollection(anchored,new Set(['main']));anchored.add(main);anchored.set(main,0);
+  assert.equal(anchored.collection.every(p=>p instanceof P && p.content===''),true);
+  assert.equal(main.content,'不得生效');
+});
+
+test('原生执行适配器覆盖三类正则和提示词，不修改原开关并正确卸载', async () => {
+  const {EventEmitter}=require('node:events'),bus=new EventEmitter(),dom=new EventTarget(),ns=core.NS;
+  const state=()=>({version:1,native:true,groups:[{id:'g',name:'组',members:['a','b'],enabled:false}]});
+  const arrays=[[regex('a'),{...regex('b'),disabled:true}],[regex('a')],[regex('a')]],before=clone(arrays);
+  const settings={extensions:{[ns]:{promptGroups:state(),regexGroups:state()}}};
+  const c={extensionSettings:{[ns]:{regexScopes:{global:state()}}},characters:[{data:{extensions:{[ns]:{regexGroups:state()}}}}],characterId:0,
+    getPresetManager:()=>({getPresetList:()=>({settings})}),eventSource:bus,eventTypes:{SETTINGS_UPDATED:'settings'}};
+  const baseGet=()=>({collection:[{identifier:'a'},{identifier:'unblocked'}],add(...p){this.collection.push(...p)}}),baseDisabled=id=>id==='already-disabled';
+  const baiGet=()=>({collection:[]}),baiDisabled=()=>true;
+  baiGet.__baiBaiToolkitOriginalGetPromptCollection=baseGet;baiDisabled.__baiBaiToolkitOriginalIsPromptDisabledForActiveCharacter=baseDisabled;
+  const pm={getPromptCollection:baiGet,isPromptDisabledForActiveCharacter:baiDisabled};
+  global.window={SillyTavern:{getContext:()=>c}};global.document=dom;
+  const stop=installGroupRuntime(async path=>path.includes('engine.js')?{SCRIPT_TYPES:{GLOBAL:0,PRESET:1,SCOPED:2},getScriptsByType:type=>arrays[type]}:{promptManager:pm});
+  try {
+    await new Promise(resolve=>setImmediate(resolve));
+    for(const rows of arrays)assert.equal(typeof Object.getOwnPropertyDescriptor(rows[0],'disabled').get,'function');
+    assert.deepEqual(clone(arrays),before);
+    assert.deepEqual(pm.getPromptCollection().collection.map(p=>p.identifier),['unblocked']);
+    assert.equal(pm.isPromptDisabledForActiveCharacter('a'),true);assert.equal(pm.isPromptDisabledForActiveCharacter('unblocked'),false);
+    assert.equal(pm.isPromptDisabledForActiveCharacter('already-disabled'),true);
+    settings.extensions[ns].promptGroups.groups[0].enabled=true;
+    c.extensionSettings[ns].regexScopes.global.groups[0].enabled=true;
+    bus.emit('settings');await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(pm.getPromptCollection().collection.map(p=>p.identifier),['a','unblocked']);
+    assert.equal(typeof Object.getOwnPropertyDescriptor(arrays[0][0],'disabled').get,'undefined');
+    assert.deepEqual(clone(arrays),before);
+  } finally {stop();delete global.window;delete global.document;}
+  assert.equal(pm.getPromptCollection,baiGet);assert.equal(pm.isPromptDisabledForActiveCharacter,baiDisabled);
+  assert.equal(bus.listenerCount('settings'),0);
+  for(const rows of arrays)assert.equal(typeof Object.getOwnPropertyDescriptor(rows[0],'disabled').get,'undefined');
+});
+
+test('分组采用只保存当前资源，失败保留草稿，跨资源移动禁止拆开保存', async () => {
+  const a=ref('A','regex','global'),b=ref('B','regex','preset'),h=quickHarness([a,b],{[a.key]:{raw:[regex('a')]},[b.key]:{raw:[regex('b')]}});
+  global.localStorage={getItem:()=>null,setItem:()=>{}};
+  setActivePinia(createPinia());const store=useWorkbench();store.init(h.host);
+  try {
+  store.documents[a.key]=makeDocument(a,await h.host.load(a));store.documents[b.key]=makeDocument(b,await h.host.load(b));
+  store.documents[a.key].state.native=true;store.documents[a.key].dirty=true;
+  store.documents[b.key].entries[0].name='待保存正文';store.documents[b.key].dirty=true;
+  assert.equal(await store.save(a.key),true);
+  assert.equal(store.documents[b.key].dirty,true);assert.equal(h.data[b.key].raw[0].scriptName,'b');
+  const commit=h.host.commit;h.host.commit=async()=>{throw Error('测试保存失败')};
+  assert.equal(await store.save(b.key),false);assert.equal(store.documents[b.key].dirty,true);assert.match(store.error,/保存失败/);
+  h.host.commit=commit;
+  store.transferAction='move';store.transfer(a.key,b.key,['a']);
+  assert.throws(()=>store.checkSaveOnly(b.key),/跨预设操作/);
+  assert.equal(await store.save(b.key),false);assert.equal(h.data[a.key].raw.length,1);
+  assert.equal(await store.save(),true);assert.equal(h.data[a.key].raw.length,0);assert.equal(h.data[b.key].raw.length,2);
+  } finally {store.$dispose();delete global.localStorage;}
 });

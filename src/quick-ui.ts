@@ -9,7 +9,10 @@ interface QuickController {
   erase(ref: Resource, id: string, detach: boolean, label: string, trigger: HTMLElement): void;
   reset(): void;
   isRange(ref: Resource): boolean;
-  collapse(ref: Resource, id: string): void;
+  collapse(ref: Resource, id: string): Promise<void>;
+  groupEnabled(ref: Resource, id: string, enabled: boolean): Promise<void>;
+  entryEnabled(ref: Resource, id: string, enabled: boolean): Promise<void>;
+  fail(error: unknown): Promise<void>;
 }
 export function createQuickUI(host: Host, guard: (ref: Resource) => void, changed: (refs: Resource[]) => void) {
   const root = document.createElement('div'); root.id = 'prw-quick-root'; document.body.append(root);
@@ -26,6 +29,9 @@ export function createQuickUI(host: Host, guard: (ref: Resource) => void, change
     },
     reset: () => vm.reset(), isRange: (ref: Resource) => vm.isRange(ref),
     collapse: (ref: Resource, id: string) => vm.collapse(ref, id),
+    groupEnabled: (ref: Resource, id: string, enabled: boolean) => vm.groupEnabled(ref, id, enabled),
+    entryEnabled: (ref: Resource, id: string, enabled: boolean) => vm.entryEnabled(ref, id, enabled),
+    fail: (error: unknown) => vm.fail(error),
     destroy() { app.unmount(); root.remove(); },
   };
 }

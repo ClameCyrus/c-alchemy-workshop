@@ -95,6 +95,7 @@ export class QuickOperations {
     const doc = await this.load(ref);
     this.adopt(doc, provider);
     const ids = rangeMembers(doc, start, end), id = uid();
+    doc.state.native = true;
     doc.state.groups.push({ id, name: name.trim(), members: [], collapsed: false, enabled: true });
     assignGroup(doc, ids, id);
     this.guard(ref);
@@ -115,6 +116,18 @@ export class QuickOperations {
     const doc = await this.load(ref), group = doc.state.groups.find(g => g.id === id);
     if (!group) throw new Error('分组已不存在');
     group.collapsed = !group.collapsed; doc.dirty = true;
+    this.guard(ref); await saveDocuments(this.host, [doc]); this.changed([ref]);
+  }
+  async groupEnabled(ref: Resource, id: string, enabled: boolean) {
+    const doc = await this.load(ref), group = doc.state.groups.find(g => g.id === id);
+    if (!group) throw new Error('分组已不存在');
+    group.enabled = enabled; doc.state.native = true; doc.dirty = true;
+    this.guard(ref); await saveDocuments(this.host, [doc]); this.changed([ref]);
+  }
+  async entryEnabled(ref: Resource, id: string, enabled: boolean) {
+    const doc = await this.load(ref), entry = doc.entries.find(e => e.id === id);
+    if (!entry) throw new Error('条目已不存在');
+    entry.enabled = enabled; doc.dirty = true;
     this.guard(ref); await saveDocuments(this.host, [doc]); this.changed([ref]);
   }
 }

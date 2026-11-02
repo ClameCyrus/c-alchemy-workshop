@@ -32,6 +32,7 @@ export interface Group {
 }
 export interface GroupState {
   version: 1;
+  native?: boolean;
   groups: Group[];
   sync: Provider[];
   suppressed: Provider[];
@@ -67,6 +68,7 @@ export interface Host {
   load: (ref: Resource) => Promise<Snapshot>;
   commit: (items: { doc: WorkDocument; snapshot: Snapshot }[]) => Promise<void>;
   refresh: (refs: Resource[]) => Promise<void>;
+  edit?: (ref: Resource, id: string) => Promise<void | boolean>;
 }
 export interface OpenRequest {
   kind?: Kind;

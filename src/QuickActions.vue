@@ -42,17 +42,17 @@ function clearRange() {
   document.querySelectorAll('.prw-range-start').forEach(e => e.classList.remove('prw-range-start'));
 }
 function reset() { if (!busy.value) stage.value = ''; clearRange(); }
-async function run(fn: () => Promise<unknown>, text: string) {
+async function run(fn: () => Promise<unknown>, text: string, clearSelection = false) {
   if (busy.value) return;
   busy.value = true;
   try {
     await fn();
     stage.value = '';
-    for (const source of sources.value) for (const id of source.ids) {
-      document.querySelectorAll<HTMLElement>('#regex_container .regex-script-label').forEach(row => {
+    if (clearSelection) for (const source of sources.value) for (const id of source.ids) {
+      document.querySelectorAll<HTMLElement>('#regex_container .regex-script-label,#regex_container .prw-native-row').forEach(row => {
         if ((row.dataset.regexScriptId || row.id) !== id) return;
         if (row.dataset.regexType && row.dataset.regexType !== source.ref.scope) return;
-        const checkbox = row.querySelector<HTMLInputElement>('.regex_bulk_checkbox');
+        const checkbox = row.querySelector<HTMLInputElement>('.regex_bulk_checkbox,.prw-native-selection');
         if (checkbox?.checked) { checkbox.checked = false; checkbox.dispatchEvent(new Event('change', { bubbles: true })); }
       });
     }
@@ -67,14 +67,14 @@ async function transfer(value: QuickSource[], mode: 'copy' | 'move', choose: boo
   trigger = element; sources.value = clone(value); action.value = mode;
   query.value = ''; targetDoc.value = undefined;
   if (!choose) {
-    await run(() => operations.transfer(value, value[0].ref, mode), `已${mode === 'copy' ? '复制' : '移动'} ${value.reduce((n, s) => n + s.ids.length, 0)} 条`);
+    await run(() => operations.transfer(value, value[0].ref, mode), `已${mode === 'copy' ? '复制' : '移动'} ${value.reduce((n, s) => n + s.ids.length, 0)} 条`, true);
     return;
   }
   targets.value = operations.targets(value[0].ref);
   await show('targets');
 }
 async function execute(ref: Resource, choice?: GroupChoice) {
-  await run(() => operations.transfer(sources.value, ref, action.value, choice), action.value === 'copy' ? '已复制' : '已移动');
+  await run(() => operations.transfer(sources.value, ref, action.value, choice), action.value === 'copy' ? '已复制' : '已移动', true);
 }
 async function groups(ref: Resource) {
   try { target.value = ref; targetDoc.value = await operations.load(ref); await show('groups'); }
@@ -86,7 +86,7 @@ async function group(ref: Resource, id: string, element: HTMLElement) {
   sources.value = [];
   if (!pending.value || !sameResource(pending.value.ref, ref)) {
     clearRange(); pending.value = { ref: clone(ref), id };
-    element.closest('.regex-script-label,[data-pm-identifier]')?.classList.add('prw-range-start');
+    element.closest('.regex-script-label,[data-pm-identifier],.prw-native-row')?.classList.add('prw-range-start');
     return;
   }
   try {
@@ -116,7 +116,12 @@ async function finishErase() {
   if (item) await run(() => operations.erase(item.ref, [item.id], item.detach), item.detach ? '已移出列表' : '已删除');
 }
 onBeforeUnmount(() => { clearTimeout(timer); clearRange(); });
-defineExpose({ transfer, group, erase, reset, collapse: (ref: Resource, id: string) => run(() => operations.collapse(ref, id), '已更新分组'), isRange: (ref: Resource) => !!pending.value && sameResource(pending.value.ref, ref) });
+defineExpose({ transfer, group, erase, reset,
+  collapse: (ref: Resource, id: string) => run(() => operations.collapse(ref, id), '已更新分组'),
+  groupEnabled: (ref: Resource, id: string, enabled: boolean) => run(() => operations.groupEnabled(ref, id, enabled), enabled ? '已启用本组' : '已暂停本组'),
+  entryEnabled: (ref: Resource, id: string, enabled: boolean) => run(() => operations.entryEnabled(ref, id, enabled), '已更新条目开关'),
+  fail: async (error: unknown) => { message.value = String(error instanceof Error ? error.message : error); await show('error'); },
+  isRange: (ref: Resource) => !!pending.value && sameResource(pending.value.ref, ref) });
 </script>
 
 <template>

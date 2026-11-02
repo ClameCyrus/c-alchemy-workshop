@@ -12,3 +12,4 @@
 .prw-native-menu button:hover,.prw-native-menu button:focus-visible{background:var(--prw-hover);outline:none}.prw-native-menu .prw-native-danger{color:var(--prw-danger)}
 @media(max-width:760px){.prw-native-menu button{padding:10px 12px}.prw-open-button{font-size:12px!important}}
 .prw-own-hidden{display:none!important}.prw-own-groups{display:flex;flex-wrap:wrap;gap:5px;padding:5px 0;list-style:none}.prw-own-groups button{font:inherit;font-size:12px;color:var(--prw-text);background:var(--prw-surface);border:1px solid var(--prw-border);border-radius:5px;padding:4px 7px;cursor:pointer}
+#completion_prompt_manager_list.prw-native-original,#saved_regex_scripts.prw-native-original,#saved_scoped_scripts.prw-native-original,#saved_preset_scripts.prw-native-original{display:none!important}.prw-native-group-mount{width:100%;min-width:0;flex:0 0 auto;max-height:min(65dvh,680px);overflow:auto;overscroll-behavior:contain}
