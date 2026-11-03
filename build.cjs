@@ -2,13 +2,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const webpack = require('webpack');
 const { VueLoaderPlugin } = require('vue-loader');
+// The optional preview is local-only and absent from public checkouts.
+const entry = { index: './src/index.ts' };
+if (fs.existsSync(path.join(__dirname, 'src/demo.ts'))) entry.demo = './src/demo.ts';
 webpack(
   {
     mode: 'production',
     context: __dirname,
     devtool: false,
-    entry: { index: './src/index.ts', demo: './src/demo.ts' },
-    output: { path: path.join(__dirname, 'dist'), filename: '[name].js', clean: true },
+    entry,
+    output: { path: path.join(__dirname, 'dist'), filename: '[name].js', clean: { keep: /^(?:demo\.js)$/ } },
     resolve: {
       extensions: ['.ts', '.js', '.vue'],
       alias: { vue: require.resolve('vue/dist/vue.runtime.esm-bundler.js') },

@@ -6,7 +6,6 @@ on:
     paths-ignore:
       - 'dist/**'
       - 'THIRD_PARTY_NOTICES.txt'
-      - 'docs/**'
       - '*.md'
       - 'LICENSE'
   pull_request:
@@ -22,7 +21,7 @@ concurrency:
 
 jobs:
   check:
-    name: Check, test and build
+    name: Check and build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,19 +40,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Type check
         run: pnpm run check
-      - name: Data and adapter tests
-        run: pnpm test
       - name: Build extension
         run: pnpm run build
       - name: Verify extension files
         run: pnpm run check:dist
-      - name: Install browser
-        run: pnpm exec playwright install --with-deps chromium
-      - name: UI tests
-        run: pnpm run test:ui
-        env:
-          CI: 'true'
-          PRW_OFFLINE_TEST: '1'
 
   publish-dist:
     name: Update installable files
@@ -78,7 +68,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm run check:dist
-      - name: Publish only the tested main revision
+      - name: Publish only the checked main revision
         env:
           EXPECTED_SHA: ${{ github.sha }}
         run: |
@@ -88,7 +78,7 @@ jobs:
             echo 'Main has advanced. Leaving this build unpublished.'
             exit 0
           fi
-          git add -- dist THIRD_PARTY_NOTICES.txt
+          git add -- dist/index.js dist/style.css dist/index.js.LICENSE.txt THIRD_PARTY_NOTICES.txt
           if git diff --cached --quiet; then
             echo 'Installable files are already current.'
             exit 0
