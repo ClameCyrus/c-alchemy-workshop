@@ -10,16 +10,19 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'verification');
     fs.mkdirSync(out,{recursive:true});await p.route('https://**/*',r=>r.fulfill({status:200,body:''}));
     await p.goto(pathToFileURL(path.join(root,'preview.html')).href);await p.locator('.entry').first().waitFor();await p.evaluate(()=>window.__PRW__.destroy());
     await p.addScriptTag({path:require.resolve('jquery')});await p.addScriptTag({path:require.resolve('jquery-ui-dist/jquery-ui.js')});
+    if(process.env.PRW_THEME_FILE)await p.addStyleTag({path:process.env.PRW_THEME_FILE});
     await p.evaluate(()=>{
       const d=window.__PRW_DEMO_DATA__['preset:preset:春日来信'],base=d.raw.prompts[0];
       d.raw.prompts=Array.from({length:329},(_,i)=>({...base,identifier:'a'+i,name:'原生提示词 '+i,content:'原生排序不改变正文。'.repeat(80)}));
       d.raw.prompt_order[0].order=d.raw.prompts.map((r,i)=>({identifier:r.identifier,enabled:i%3!==0,extra:'保留排序字段'}));
       d.own={version:1,native:true,sync:[],suppressed:[],groups:[{id:'g1',name:'原组',members:['a0','a1','a2'],collapsed:false,enabled:true},{id:'g2',name:'折叠组',members:['a3','a4'],collapsed:true,enabled:false},{id:'g3',name:'展开组',members:['a6','a7'],collapsed:false,enabled:true}]};
+      d.own.groups.push({id:'g4',name:'大量折叠',members:Array.from({length:280},(_,i)=>'a'+(i+8)),collapsed:true,enabled:true});
       window.__nativeEvents={load:0,commit:0,refresh:0,updates:0,saves:0,starts:0,stops:0};
       for(const key of ['load','commit','refresh']){const fn=window.__PRW_HOST__[key].bind(window.__PRW_HOST__);window.__PRW_HOST__[key]=async(...args)=>{window.__nativeEvents[key]++;return fn(...args)}}
       const container=document.querySelector('#openai_settings');container.style.cssText='display:block;width:460px;height:730px;overflow:auto;margin:12px;background:#1c2824';
       container.insertAdjacentHTML('afterbegin','<div class="completion_prompt_manager_header_advanced">预设条目</div>');
       const list=document.createElement('ul');list.id='completion_prompt_manager_list';list.style.cssText='padding:0;margin:0;list-style:none';document.querySelector('#completion_prompt_manager_list').replaceWith(list);
+      const manager=document.createElement('div');manager.id='completion_prompt_manager';list.before(manager);manager.append(list);
       const heading=document.createElement('li');heading.className='completion_prompt_manager_list_head';heading.textContent='名称';list.append(heading);
       d.raw.prompts.forEach(r=>{const li=document.createElement('li');li.className='completion_prompt_manager_prompt completion_prompt_manager_prompt_draggable';li.dataset.pmIdentifier=r.identifier;li.style.cssText='height:36px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #486';li.innerHTML=`<span class="drag-handle">☰</span><span class="completion_prompt_manager_prompt_name" style="flex:1">${r.name}</span><span class="prompt_manager_prompt_controls"><span class="prompt-manager-edit-action">✎</span><span class="prompt-manager-toggle-action">◉</span></span>`;list.append(li)});
       const update=(event,ui)=>{window.__nativeEvents.updates++;const data=window.__PRW_DEMO_DATA__['preset:preset:春日来信'];const old=new Map(data.raw.prompt_order[0].order.map(o=>[o.identifier,o]));const ids=window.jQuery(list).sortable('toArray',{attribute:'data-pm-identifier'});if(ids.length!==329||ids.some(id=>!old.has(id)))throw Error('原生排序收到无效ID');data.raw.prompt_order[0].order=ids.map(id=>old.get(id));window.__nativeEvents.saves++};
@@ -28,11 +31,30 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'verification');
     });
     await p.addScriptTag({path:path.join(root,'dist/index.js')});await p.locator('#prw-panel .entry').first().waitFor();await p.getByRole('button',{name:'关闭',exact:true}).click();
     const list=p.locator('#completion_prompt_manager_list'),row=id=>list.locator(`[data-pm-identifier=${id}]`),header=id=>list.locator(`[data-group-id=${id}]`);
-    await expect(list.locator('.prw-native-group-header')).toHaveCount(3);
+    await expect(list.locator('.prw-native-group-header')).toHaveCount(4);
     const counts=()=>p.evaluate(()=>({...window.__nativeEvents}));
-    async function begin(id){const s=await row(id).locator('.drag-handle').boundingBox();await p.mouse.move(s.x+6,s.y+s.height/2);await p.mouse.down();await p.waitForTimeout(70);await p.mouse.move(s.x+20,s.y+s.height/2+8,{steps:3});await expect(list.locator('.ui-sortable-helper')).toHaveCount(1)}
+    async function begin(id){const s=await row(id).boundingBox();await p.mouse.move(s.x+6,s.y+s.height/2);await p.mouse.down();await p.waitForTimeout(70);await p.mouse.move(s.x+20,s.y+s.height/2+8,{steps:3});await expect(list.locator('.ui-sortable-helper')).toHaveCount(1)}
     async function over(el,after=false){const t=await el.boundingBox();await p.mouse.move(t.x+80,after?t.y+t.height-3:t.y+5,{steps:8});await p.mouse.move(t.x+81,after?t.y+t.height-3:t.y+6);}
     const order=()=>p.evaluate(()=>window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw.prompt_order[0].order.map(o=>o.identifier));
+    await check('282条折叠项不参与原生尺寸测量，完整items和toArray保留，异常也恢复集合',async()=>{
+      const report=await p.evaluate(()=>{
+        const jq=window.jQuery,s=window.__originalSortable,all=s.items,original=jq.ui.sortable.prototype._refreshItemPositions;
+        const width=jq.cssHooks.width.get,height=jq.cssHooks.height.get;let reads=0;
+        jq.cssHooks.width.get=function(el,...args){if(el.classList.contains('prw-group-folded'))reads++;return width.call(this,el,...args)};
+        jq.cssHooks.height.get=function(el,...args){if(el.classList.contains('prw-group-folded'))reads++;return height.call(this,el,...args)};
+        try{
+          const t=performance.now();original.call(s);const before={ms:performance.now()-t,reads};reads=0;
+          const next=performance.now();s.refreshPositions();const after={ms:performance.now()-next,reads};
+          const result={before,after,count:s.items.length,same:all===s.items,ids:jq(s.element).sortable('toArray',{attribute:'data-pm-identifier'}).length,zero:s.items.filter(i=>i.item[0].classList.contains('prw-group-folded')).every(i=>i.width===0&&i.height===0)};
+          const visible=s.items.find(i=>!i.item[0].classList.contains('prw-group-folded')),w=visible.item.outerWidth;
+          visible.item.outerWidth=()=>{throw Error('模拟尺寸读取失败')};
+          try{s.refreshPositions()}catch(e){result.failed=e.message==='模拟尺寸读取失败'}finally{visible.item.outerWidth=w}
+          result.restored=s.items===all;return result;
+        }finally{jq.cssHooks.width.get=width;jq.cssHooks.height.get=height}
+      });metrics.geometry=report;
+      assert.equal(report.before.reads,564);assert.equal(report.after.reads,0);assert.equal(report.count,329);assert.equal(report.ids,329);
+      assert.ok(report.same&&report.zero&&report.failed&&report.restored,JSON.stringify(report));
+    });
     await check('329条原生预设使用原Sortable实例与update回调，拖动期间不重读重排',async()=>{
       await p.waitForTimeout(150);const before=await counts();await begin('a1');await over(row('a0'));
       await expect(p.locator('.prw-native-drop-line')).toBeVisible();await p.waitForTimeout(150);
@@ -80,14 +102,15 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'verification');
     });
     await check('工坊存在草稿时阻止原生排序开始，关闭分组后仍保留原生拖动',async()=>{
       await p.evaluate(()=>{const s=document.querySelector('#prw-mount').__vue_app__.config.globalProperties.$pinia._s.get('preset-regex-workbench');s.documents[s.keys.left].dirty=true});
-      const before=await counts(),ids=await order(),s=await row('a0').locator('.drag-handle').boundingBox();
+      const before=await counts(),ids=await order(),s=await row('a0').boundingBox();
       await p.mouse.move(s.x+5,s.y+5);await p.mouse.down();await p.waitForTimeout(70);await p.mouse.move(s.x+20,s.y+20);await p.mouse.up();
       await expect(p.getByRole('dialog',{name:'操作未完成',exact:true})).toContainText('未保存修改');assert.deepEqual(await order(),ids);assert.equal((await counts()).starts,before.starts);
       await p.getByRole('dialog',{name:'操作未完成',exact:true}).getByRole('button',{name:'关闭',exact:true}).click();
       await p.evaluate(()=>{const s=document.querySelector('#prw-mount').__vue_app__.config.globalProperties.$pinia._s.get('preset-regex-workbench');s.documents[s.keys.left].dirty=false;window.__PRW__.open()});
       await p.getByRole('button',{name:'设置',exact:true}).click();await p.getByRole('checkbox',{name:'启用分组功能',exact:true}).uncheck();await p.getByRole('button',{name:'关闭外观'}).click();await p.getByRole('button',{name:'关闭',exact:true}).click();await expect(list.locator('.prw-native-group-header')).toHaveCount(0);
+      assert.equal(await p.evaluate(()=>window.__originalSortable._refreshItemPositions===window.jQuery.ui.sortable.prototype._refreshItemPositions),true);
       const plain=await counts();await begin('a2');await over(row('a0'));await p.mouse.up();assert.equal((await counts()).updates,plain.updates+1);assert.equal((await counts()).commit,plain.commit);
     });
-    metrics.native=await counts();assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'native-preset-results.json'),JSON.stringify({results,metrics,errors},null,2));
+    metrics.native=await counts();assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,process.env.PRW_THEME_FILE?'native-preset-theme-results.json':'native-preset-results.json'),JSON.stringify({results,metrics,errors},null,2));
   }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});

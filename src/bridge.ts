@@ -120,7 +120,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     row.classList.add(kind === 'regex' ? 'prw-enhanced-regex' : 'prw-enhanced-preset');
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'prw-row-more menu_button';
+    button.className = 'prw-row-more';
     button.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/></svg>';
     button.title = '更多';
     button.setAttribute('aria-label', '更多');

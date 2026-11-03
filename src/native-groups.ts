@@ -3,6 +3,7 @@ import { nativeFolds, saveNativeFold } from './native-folds';
 import { groupingEnabled } from './preferences';
 import { retainNativeBodies } from './native-bodies';
 import { nativeDragBusy } from './native-drag';
+import { retainNativePresetGeometry } from './native-preset-geometry';
 import type { NativeModel } from './native-model';
 import type { Group, Host, Resource } from './types';
 
@@ -12,6 +13,7 @@ interface View {
   root: HTMLElement; model: NativeModel; rows: Map<string, HTMLElement[]>;
   sections: Map<HTMLElement, Section>; aria: Map<Element, string | null>; busy: Set<string>;
   bodies: ReturnType<typeof retainNativeBodies>;
+  geometry?: ReturnType<typeof retainNativePresetGeometry>;
 }
 const ROW = '.completion_prompt_manager_prompt[data-pm-identifier],.regex-script-label';
 const OWN = '.prw-native-group-header,.prw-row-more,.prw-bulk-actions,#prw-quick-root,.prw-native-menu';
@@ -26,6 +28,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     view.root.querySelectorAll<HTMLElement>('[data-prw-group-id]').forEach(row => delete row.dataset.prwGroupId);
     view.root.classList.remove('prw-native-grouped');
     view.bodies.restore();
+    view.geometry?.restore();
     view.aria.forEach((value, element) => { if (value === null) element.removeAttribute('aria-hidden'); else element.setAttribute('aria-hidden', value); });
     views.delete(key);
   }
@@ -63,6 +66,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
   }
   function decorate(view: View) {
     view.bodies.sync();
+    view.geometry?.sync();
     const member = new Map(view.model.groups.flatMap(g => g.members.map(id => [id, g] as const)));
     const rows = [...view.root.querySelectorAll<HTMLElement>(ROW)].filter(row => !row.closest('.bai-bai-preset-global-library'));
     const starts = new Map<HTMLElement, Group>();
@@ -142,7 +146,8 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
       if (!model) { remove(ref.key); continue; }
       let view = views.get(ref.key);
       if (view && view.root !== root) { remove(ref.key); view = undefined; }
-      if (!view) { view = { root, model, rows: new Map(), sections: new Map(), aria: new Map(), busy: new Set(), bodies: retainNativeBodies(root) }; views.set(ref.key, view); }
+      if (!view) { view = { root, model, rows: new Map(), sections: new Map(), aria: new Map(), busy: new Set(), bodies: retainNativeBodies(root),
+        geometry: ref.kind === 'preset' ? retainNativePresetGeometry(root) : undefined }; views.set(ref.key, view); }
       view.model = model; decorate(view);
     }
   }
