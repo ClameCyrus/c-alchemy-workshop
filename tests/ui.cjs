@@ -326,13 +326,13 @@ fs.mkdirSync(out, { recursive: true });
       await quick.getByRole('button',{name:'展开 就地分组',exact:true}).click();
       await expect(quick.locator('#completion_prompt_manager_list [data-pm-identifier="a0"]')).toBeVisible();
     });
-    await check('保留原生行和开关，只加分组标题，组暂停不改条目开关', async () => {
+    await check('保留原生行和开关，只加分组标题，组停用不改条目开关', async () => {
       const mount=quick.locator('#completion_prompt_manager_list');
       await expect(mount.locator('.completion_prompt_manager_prompt')).toHaveCount(6);
       await expect(quick.locator('#completion_prompt_manager_list')).toBeVisible();
       assert.equal(await quick.evaluate(()=>document.querySelector('#completion_prompt_manager_list .completion_prompt_manager_prompt')===window.__PRW_ORIGINAL_ROW__),true);
       const before=await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw));
-      await mount.getByRole('button',{name:'暂停 就地分组',exact:true}).click();
+      await mount.getByRole('button',{name:'停用 就地分组',exact:true}).click();
       await expect(mount.getByRole('button',{name:'启用 就地分组',exact:true})).toBeVisible();
       assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw)),before);
       await expect(mount.locator('[data-pm-identifier="a1"] .prompt-manager-toggle-action')).toBeVisible();
@@ -345,15 +345,15 @@ fs.mkdirSync(out, { recursive: true });
       }
       await quick.setViewportSize({width:1440,height:1000});
       await mount.getByRole('button',{name:'启用 就地分组',exact:true}).click();
-      await expect(mount.getByRole('button',{name:'暂停 就地分组',exact:true})).toBeVisible();
+      await expect(mount.getByRole('button',{name:'停用 就地分组',exact:true})).toBeVisible();
       assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['preset:preset:春日来信'].raw)),before);
       const regexMount=quick.locator('#saved_regex_scripts');
       const regexBefore=await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw));
-      await regexMount.getByRole('button',{name:'暂停 显示整理',exact:true}).click();
+      await regexMount.getByRole('button',{name:'停用 显示整理',exact:true}).click();
       await expect(regexMount.getByRole('button',{name:'启用 显示整理',exact:true})).toBeVisible();
       assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw)),regexBefore);
       await regexMount.getByRole('button',{name:'启用 显示整理',exact:true}).click();
-      await expect(regexMount.getByRole('button',{name:'暂停 显示整理',exact:true})).toBeVisible();
+      await expect(regexMount.getByRole('button',{name:'停用 显示整理',exact:true})).toBeVisible();
       assert.equal(await quick.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw)),regexBefore);
     });
     await check('工坊原生分组列表支持多选复制，成功后清空勾选',async()=>{

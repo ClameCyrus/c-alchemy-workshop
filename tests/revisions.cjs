@@ -94,7 +94,7 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'verification');
     await check('95条长正则只增标题，原生行、复选框和事件保持身份',async()=>{
       await expect(native.locator('#saved_regex_scripts .regex-script-label:visible')).toHaveCount(95);
       await expect(native.locator('.prw-native-group-header')).toHaveCount(1);
-      assert.equal(await native.locator('.prw-native-group-header').textContent(),'▾ 测试组  50暂停');
+      assert.equal(await native.locator('.prw-native-group-header').textContent(),'▾ 测试组  50停用');
       assert.equal(await native.evaluate(()=>document.querySelector('#saved_regex_scripts .regex-script-label')===window.__ORIGINAL_NATIVE_ROW__),true);
       assert.equal(await native.evaluate(()=>document.querySelector('#saved_regex_scripts .disable_regex')===window.__ORIGINAL_NATIVE_INPUT__),true);
       await native.locator('#saved_regex_scripts .disable_regex').first().uncheck();assert.equal(await native.evaluate(()=>window.__NATIVE_SWITCH_CALLS__),1);
@@ -106,9 +106,9 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'verification');
       await native.getByRole('button',{name:'折叠 测试组',exact:true}).click();await expect(native.locator('#saved_regex_scripts .regex-script-label:visible')).toHaveCount(45);
       await native.getByRole('button',{name:'展开 测试组',exact:true}).click();
     });
-    await check('暂停只更新组元数据，不重建行或修改原开关',async()=>{
+    await check('停用只更新组元数据，不重建行或修改原开关',async()=>{
       const before=await native.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw));
-      await native.getByRole('button',{name:'暂停 测试组',exact:true}).click();await expect(native.getByRole('button',{name:'启用 测试组',exact:true})).toBeVisible();
+      await native.getByRole('button',{name:'停用 测试组',exact:true}).click();await expect(native.getByRole('button',{name:'启用 测试组',exact:true})).toBeVisible();
       assert.equal(await native.evaluate(()=>JSON.stringify(window.__PRW_DEMO_DATA__['regex:global'].raw)),before);
       assert.deepEqual(await native.evaluate(()=>window.__HOST_COUNTS__),{load:0,commit:0,refresh:0,setGroupEnabled:1});
     });

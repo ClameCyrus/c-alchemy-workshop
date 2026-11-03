@@ -3,6 +3,8 @@ import { installNativeGroupViews } from './native-groups';
 import { createQuickUI } from './quick-ui';
 import type { QuickSource } from './quick-operations';
 import { groupingEnabled } from './preferences';
+import { QuickOperations } from './quick-operations';
+import { installNativeRegexDrag, nativeDragBusy } from './native-drag';
 
 export function installNativeMenus(host: Host, open: (request: OpenRequest) => void, guard: (ref: Resource) => void = () => {}): () => void {
   let groups: ReturnType<typeof installNativeGroupViews> | undefined;
@@ -110,7 +112,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
       bounds = menu.getBoundingClientRect();
     menu.style.left = `${Math.max(8, Math.min(innerWidth - bounds.width - 8, rect.right - bounds.width))}px`;
     menu.style.top = `${Math.max(8, Math.min(innerHeight - bounds.height - 8, rect.bottom + 5))}px`;
-    menu.querySelector('button')?.focus();
+    menu.querySelector('button')?.focus({ preventScroll: true });
   }
   function enhance(row: HTMLElement, kind: 'preset' | 'regex') {
     if (row.querySelector('.prw-row-more')) return;
@@ -139,6 +141,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     button.addEventListener('pointerdown', event => event.stopPropagation(), { signal });
   }
   function scan() {
+    if (nativeDragBusy()) return;
     document
       .querySelectorAll<HTMLElement>('#regex_container .regex-script-label')
       .forEach(row => enhance(row, 'regex'));
@@ -173,6 +176,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
   }
   let scheduled = false;
   const observer = new MutationObserver(records => {
+    if (nativeDragBusy()) return;
     const own = (node: Node) => node instanceof Element && !!node.closest('.prw-native-group-header,.prw-row-more,.prw-bulk-actions,.prw-native-menu,#prw-quick-root');
     if (records.every(r => own(r.target) || [...r.addedNodes, ...r.removedNodes].every(own))) return;
     if (scheduled) return;
@@ -189,6 +193,11 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
   groups = installNativeGroupViews(host, {
     enable: (ref, id, enabled) => quick.groupEnabled(ref, id, enabled),
   });
+  const operations = new QuickOperations(host, guard, refs => groups?.invalidate(refs));
+  const stopDrag = installNativeRegexDrag(row => currentRef(row, 'regex'),
+    (ref, id, target) => operations.reorderRegex(ref, id, target.id, target.after, target.groupId), quick.fail);
+  document.addEventListener('prw:native-drag-start', close, { signal });
+  document.addEventListener('prw:native-drag-end', scan, { signal });
   scan();
   document.addEventListener(
     'pointerdown',
@@ -212,6 +221,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     { signal },
   );
   window.addEventListener('resize', close, { signal });
+  document.addEventListener('scroll', event => { if (menu && !menu.contains(event.target as Node)) close(); }, { capture: true, passive: true, signal });
   const c = window.SillyTavern?.getContext(),
     events = ['OAI_PRESET_CHANGED_AFTER', 'CHAT_CHANGED', 'MAIN_API_CHANGED']
       .map(k => c?.eventTypes[k])
@@ -220,6 +230,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
   for (const event of events) c.eventSource.on(event, invalidate);
   return () => {
     close();
+    stopDrag();
     groups?.destroy();
     quick.destroy();
     abort.abort();

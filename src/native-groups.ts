@@ -2,6 +2,7 @@ import { nativeModel } from './native-model';
 import { nativeFolds, saveNativeFold } from './native-folds';
 import { groupingEnabled } from './preferences';
 import { retainNativeBodies } from './native-bodies';
+import { nativeDragBusy } from './native-drag';
 import type { NativeModel } from './native-model';
 import type { Group, Host, Resource } from './types';
 
@@ -22,6 +23,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     const view = views.get(key); if (!view) return;
     view.sections.forEach(s => s.header.remove());
     view.root.querySelectorAll('.prw-group-folded').forEach(row => row.classList.remove('prw-group-folded'));
+    view.root.querySelectorAll<HTMLElement>('[data-prw-group-id]').forEach(row => delete row.dataset.prwGroupId);
     view.root.classList.remove('prw-native-grouped');
     view.bodies.restore();
     view.aria.forEach((value, element) => { if (value === null) element.removeAttribute('aria-hidden'); else element.setAttribute('aria-hidden', value); });
@@ -51,7 +53,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
       if (section.fold.textContent !== text) section.fold.textContent = text;
       section.fold.setAttribute('aria-label', `${folded ? '展开' : '折叠'} ${group.name}`);
       section.fold.setAttribute('aria-expanded', String(!folded));
-      const label = group.enabled ? '暂停' : '启用';
+      const label = group.enabled ? '停用' : '启用';
       if (section.power.textContent !== label) section.power.textContent = label;
       section.power.setAttribute('aria-label', `${label} ${group.name}`);
       section.power.title = `${label}本组，保留条目开关`;
@@ -68,6 +70,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     let previous: HTMLElement | undefined, previousGroup = '';
     for (const row of rows) {
       const group = member.get(row.dataset.pmIdentifier || row.dataset.regexScriptId || row.id);
+      if (row.dataset.prwGroupId !== (group?.id || '')) row.dataset.prwGroupId = group?.id || '';
       if (group) {
         if (previousGroup !== group.id || previous?.parentElement !== row.parentElement) starts.set(row, group);
         const members = view.rows.get(group.id) || []; members.push(row); view.rows.set(group.id, members);
@@ -115,7 +118,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     for (const group of view.model.groups) paint(view, group.id);
   }
   function scan() {
-    if (stopped) return;
+    if (stopped || nativeDragBusy()) return;
     if (!groupingEnabled()) { for (const key of views.keys()) remove(key); return; }
     const current = scopes(), seen = new Set(current.map(s => s.ref.key));
     for (const key of views.keys()) if (!seen.has(key)) remove(key);
@@ -146,6 +149,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
   function invalidate(refs?: Resource[]) {
     if (stopped) return;
     for (const key of refs?.map(r => r.key) || cache.keys()) pending.add(key);
+    if (nativeDragBusy()) return;
     if (queued) return;
     queued = true;
     queueMicrotask(() => {
@@ -155,6 +159,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
   }
   const owned = (node: Node) => node instanceof Element && !!node.closest(OWN);
   const observer = new MutationObserver(records => {
+    if (nativeDragBusy()) return;
     const relevant = records.some(record => {
       if (owned(record.target)) return false;
       const nodes = [...record.addedNodes, ...record.removedNodes];
@@ -181,12 +186,19 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
   document.addEventListener('prw:resources-saved', saved);
   document.addEventListener('prw:group-state', groupState);
   document.addEventListener('prw:grouping-preference', preference);
+  const dragEnd = (e: Event) => {
+    if (pending.size) invalidate([]);
+    else if ((e as CustomEvent).detail?.changed) invalidate();
+    else scan();
+  };
+  document.addEventListener('prw:native-drag-end', dragEnd);
   return {
     scan, invalidate,
     destroy() {
       stopped = true; epoch++; clearTimeout(timer); observer.disconnect();
       document.removeEventListener('prw:resources-saved', saved); document.removeEventListener('prw:group-state', groupState);
       document.removeEventListener('prw:grouping-preference', preference); for (const key of views.keys()) remove(key);
+      document.removeEventListener('prw:native-drag-end', dragEnd);
     },
   };
 }

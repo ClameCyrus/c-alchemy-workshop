@@ -361,6 +361,8 @@ async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
     notice.value = '已分组';
     return;
   }
+  const changingAnchor = anchor.value?.key === doc.ref.key && anchor.value.id !== entry.id;
+  if (changingAnchor) { picked.value = { left: '', right: '' }; readerOpen.value = false; relationFilter.value = 'all'; }
   picked.value[side] = entry.id;
   readerPage.value = side;
   readerOpen.value = !dual.value || !!(pickedEntries.value.left && pickedEntries.value.right);
@@ -699,7 +701,12 @@ onBeforeUnmount(() => {
           <button aria-label="设置" title="设置" @click="appearanceDialog = true">◐</button>
           <button class="history-action" :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button
           ><button class="history-action" :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button
-          ><button class="primary" :disabled="!dirty.length || busy" @click="state.save()">
+          ><button
+            v-if="dirty.length"
+            class="discard-action" :disabled="busy" title="放弃本次改动"
+            @click="async () => { if (await ask('放弃修改', '放弃所有未保存修改？', true)) await state.discard(); }"
+          >放弃</button>
+          <button class="primary" :disabled="!dirty.length || busy" @click="state.save()">
             {{ busy ? '保存中…' : dirty.length ? `保存 · ${dirty.length}` : '已保存' }}</button
           ><button aria-label="关闭" title="关闭" @click="close">✕</button>
         </div>
@@ -730,17 +737,6 @@ onBeforeUnmount(() => {
         <label v-if="kind === 'preset'" class="compact-check"
           ><input v-model="includeUnused" type="checkbox" />未加入列表</label
         >
-        <button
-          v-if="dirty.length"
-          class="text-button"
-          @click="
-            async () => {
-              if (await ask('放弃修改', '放弃所有未保存修改？', true)) await state.discard();
-            }
-          "
-        >
-          放弃
-        </button>
       </nav>
       <div v-if="error" class="error-banner" role="alert">
         <span>{{ error }}</span
@@ -870,7 +866,7 @@ onBeforeUnmount(() => {
                   >
                     {{ g.name }} <small>{{ g.members.length }}</small>
                   </button>
-                  <button :aria-label="`${g.enabled ? '暂停' : '启用'} ${g.name}`" :title="g.enabled ? '暂停本组，保留条目开关' : '启用本组，保留条目开关'" @click="state.change(() => { g.enabled = !g.enabled; docs[side].state.native = true; docs[side].dirty = true; })">{{ g.enabled ? '暂停' : '启用' }}</button>
+                  <button :aria-label="`${g.enabled ? '停用' : '启用'} ${g.name}`" :title="g.enabled ? '停用本组，保留条目开关' : '启用本组，保留条目开关'" @click="state.change(() => { g.enabled = !g.enabled; docs[side].state.native = true; docs[side].dirty = true; })">{{ g.enabled ? '停用' : '启用' }}</button>
                   <details>
                     <summary aria-label="分组操作">⋯</summary>
                     <div class="small-menu">
@@ -893,10 +889,12 @@ onBeforeUnmount(() => {
                     'drop-before': dropTarget?.key === docs[side].ref.key && dropTarget.id === entry.id && !dropTarget.after,
                     'drop-after': dropTarget?.key === docs[side].ref.key && dropTarget.id === entry.id && dropTarget.after,
                     disabled: !entry.enabled,
+                    protected: protectedEntry(entry),
                   },
                   matchFor(docs[side], entry)?.type,
                 ]"
                 :data-entry-id="entry.id"
+                :title="protectedEntry(entry) ? '系统条目：不能复制、移动或删除' : undefined"
                 :draggable="operation === 'drag' && !rangeStart && !protectedEntry(entry)"
                 @pointerdown.capture="dragBlocked = !!($event.target as Element).closest('button,input,select,textarea,summary,details,a')"
                 @dragstart="dragStart($event, docs[side], entry)"
@@ -916,12 +914,13 @@ onBeforeUnmount(() => {
                     @click.stop
                     @change="toggleSelect(docs[side], entry.id, ($event.target as HTMLInputElement).checked)"
                   /><span
-                    v-if="operation === 'drag'"
+                    v-if="operation === 'drag' && !protectedEntry(entry)"
                     class="drag-handle"
                     title="拖动"
                     @click.stop
                     >⠿</span
                   ><strong :title="entry.name">{{ entry.name }}</strong
+                  ><span v-if="protectedEntry(entry)" class="tag protected-tag" title="不能复制、移动或删除">系统</span
                   ><span v-if="entry.unused" class="tag">未加入</span
                   ><span v-if="matchFor(docs[side], entry)?.settingsDifferent" class="tag">设置不同</span
                   ><button
@@ -1234,6 +1233,10 @@ onBeforeUnmount(() => {
     'Microsoft YaHei',
     sans-serif;
   color-scheme: normal;
+  box-sizing: border-box;
+  overflow: hidden;
+  max-width: 100vw;
+  max-height: 100dvh;
 }
 .prw-overlay * {
   box-sizing: border-box;
@@ -1873,20 +1876,29 @@ onBeforeUnmount(() => {
   -webkit-tap-highlight-color: transparent;
 }
 @media (max-width: 760px) {
-  .prw-overlay {
+  #prw-panel.prw-overlay {
     padding: 0;
     font-size: 13px;
   }
-  .prw-window {
+  #prw-panel .prw-window {
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    flex: 1;
     height: 100dvh;
     max-height: 100dvh;
     border: 0;
     border-radius: 0;
   }
   .prw-header {
-    padding: 10px 12px;
+    padding: 8px 10px;
+    flex-wrap: wrap;
+    gap: 6px;
   }
+  .header-actions { margin-left: auto; max-width: 100%; flex-wrap: wrap; }
+  .brand { max-width: 100%; }
+  .brand strong { min-width: 0; }
+
   .brand {
     gap: 6px;
   }
@@ -2067,8 +2079,9 @@ onBeforeUnmount(() => {
 
 .appearance-dialog{width:min(340px,100%);padding:16px;background:var(--prw-bg);border:1px solid var(--prw-border);border-radius:12px;display:grid;gap:14px}.appearance-dialog header{display:flex;align-items:center;justify-content:space-between}.palette-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.palette-grid label{display:flex;align-items:center;justify-content:space-between;gap:8px}.palette-grid input[type=color]{width:38px;height:32px;padding:2px}
 .mobile-history{display:none}
-@media(max-width:420px){.header-actions .history-action{display:none}.mobile-history{display:flex;gap:4px}.mobile-history button{padding:3px 6px}.brand small{display:none}.header-actions button{padding:6px}.brand strong{flex-shrink:0}}
+@media(max-width:420px){.header-actions .history-action{display:none}.mobile-history{display:flex;gap:4px}.mobile-history button{padding:3px 6px}.brand small{display:none}.header-actions button{padding:6px}.brand strong{flex-shrink:1}}
 
+.entry.protected{border-inline-start-color:var(--prw-muted);border-inline-start-style:dashed}.protected-tag{color:var(--prw-muted);border:1px dashed var(--prw-border);background:transparent;flex:none}.entry.protected .drag-handle{display:none}
 </style>
 
 <style scoped>

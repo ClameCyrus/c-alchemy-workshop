@@ -21,3 +21,38 @@
 /* Flatten only known third-party group shells, leaving row identity, listeners and native switches intact. */
 .prw-native-grouped :is(.bai-bai-regex-group,.bai-bai-regex-group-body,.bai-bai-regex-group-body-inner,.bai-bai-regex-group-list,.bai-bai-preset-group,.bai-bai-preset-group>.bai-bai-preset-group-body,.bai-bai-preset-group .bai-bai-preset-group-body-inner,.bai-bai-preset-group .bai-bai-preset-group-list){display:contents!important;pointer-events:auto!important;opacity:1!important}
 .prw-native-grouped :is(.bai-bai-regex-group-header,.bai-bai-regex-list-toolbar,.bai-bai-preset-group>.bai-bai-preset-group-header){display:none!important}
+
+/* Preserve native icons and switches; align the added action with their centers. */
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls{display:inline-flex!important;align-items:center!important}
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>span{align-self:center!important}
+.prw-native-grouped :is(.drag-handle,.menu-handle,.bai-bai-regex-script-drag-handle){touch-action:none;cursor:grab}
+.prw-native-moving{opacity:.55!important}
+.prw-native-drag-preview,.prw-native-drop-line{position:fixed!important;pointer-events:none!important;z-index:100250!important;box-sizing:border-box!important}
+.prw-native-drag-preview{max-width:min(300px,calc(100vw - 16px));padding:7px 12px;border:1px solid var(--SmartThemeBorderColor,var(--prw-border));border-radius:6px;background:var(--SmartThemeBlurTintColor,var(--prw-bg));color:var(--SmartThemeBodyColor,var(--prw-text));box-shadow:0 4px 16px var(--prw-shadow);font:13px/1.4 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prw-native-drop-line{height:3px;background:var(--SmartThemeQuoteColor,var(--prw-accent))!important;box-shadow:0 0 0 1px var(--SmartThemeBlurTintColor,var(--prw-bg))}
+
+/* Tavern themes often style every select/button with !important. Confine this guard to our UI. */
+#prw-mount :is(#prw-panel,.prw-text-reader) :is(button,select,input,textarea){box-sizing:border-box!important;box-shadow:none!important;text-shadow:none!important;letter-spacing:normal!important;font-family:inherit!important;color:var(--prw-control-text,var(--prw-text))!important;border-color:var(--prw-control-border,var(--prw-border))!important;border-radius:7px!important;background:var(--prw-control-bg,var(--prw-surface))!important}
+#prw-mount :is(#prw-panel,.prw-text-reader) button{--prw-control-bg:var(--prw-surface);--prw-control-text:var(--prw-text);--prw-control-border:var(--prw-border);min-width:0!important;line-height:1.25!important}
+#prw-mount :is(#prw-panel,.prw-text-reader) button:hover{--prw-control-bg:var(--prw-hover)}
+#prw-mount :is(#prw-panel,.prw-text-reader) button:is(.active,.primary){--prw-control-bg:var(--prw-active);--prw-control-border:var(--prw-accent)}
+#prw-mount #prw-panel :is(.segmented,.entry-top,.list-toolbar) button{--prw-control-bg:transparent;--prw-control-border:transparent}
+#prw-mount #prw-panel .segmented button.active{--prw-control-bg:var(--prw-active)}
+#prw-mount #prw-panel .enabled-toggle{--prw-control-text:var(--prw-accent)}
+#prw-mount #prw-panel button.exact{--prw-control-text:var(--prw-exact)}
+#prw-mount #prw-panel button.partial{--prw-control-text:var(--prw-partial)}
+#prw-mount #prw-panel button.similar{--prw-control-text:var(--prw-similar)}
+#prw-mount #prw-panel button.danger{--prw-control-text:var(--prw-danger)}
+#prw-mount #prw-panel select{appearance:auto!important;background-image:none!important;padding:6px 8px!important;margin:0!important;font-size:inherit!important;line-height:1.25!important;height:36px;max-width:100%;text-overflow:ellipsis}
+#prw-mount #prw-panel select option{color:var(--prw-text)!important;background:var(--prw-bg)!important}
+#prw-mount #prw-panel .prw-toolbar>select{min-width:5em}
+#prw-mount #prw-panel input:is([type=checkbox],[type=radio]){appearance:auto!important;accent-color:var(--prw-accent)!important;width:16px!important;height:16px!important;min-width:16px!important;min-height:16px!important;margin:0!important;padding:0!important;transform:none!important;filter:none!important}
+#prw-mount #prw-panel input:is([type=checkbox],[type=radio])::after,#prw-mount #prw-panel input:is([type=checkbox],[type=radio])::before{content:none!important;display:none!important}
+#prw-mount #prw-panel .prw-window{border-radius:16px!important}
+#prw-mount #prw-panel .entry{border-radius:10px!important}
+#prw-mount #prw-panel :is(.segmented,.edit-dialog,.group-dialog,.confirm-dialog,.appearance-dialog){border-radius:8px!important}
+#prw-mount #prw-panel :is(.entry p,.entry-meta,.brand small){color:var(--prw-muted)!important}
+#prw-mount #prw-panel .entry-top strong{color:var(--prw-text)!important}
+#prw-mount .prw-text-reader pre{color:var(--prw-text)!important;background:transparent!important;border:0!important;text-shadow:none!important;box-shadow:none!important;transform:none!important}
+#prw-mount .prw-text-reader pre::before,#prw-mount .prw-text-reader pre::after{content:none!important;display:none!important}
+@media(max-width:760px){#prw-mount #prw-panel.prw-overlay{padding:0!important}#prw-mount #prw-panel .prw-window{border-radius:0!important}#prw-mount #prw-panel select{font-size:12px!important}}

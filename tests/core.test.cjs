@@ -12,10 +12,59 @@ require.extensions['.ts'] = (module, filename) =>
 const core = require('../src/core.ts');
 const { NativeHost, saveDocuments } = require('../src/native.ts');
 const { QuickOperations } = require('../src/quick-operations.ts');
+const { settingDifferences } = require('../src/entry-settings.ts');
 const { gateRegexFlag, gatePromptCollection, nativeRegexRead, installGroupRuntime } = require('../src/group-runtime.ts');
 const { nativeModel } = require('../src/native-model.ts');
 const { createPinia, setActivePinia } = require('pinia');
 const { useWorkbench } = require('../src/workbench.ts');
+
+test('正文对比列出预设和正则的设置差异，值能直接阅读',()=>{
+  const a=makeDocument(ref('a'),{raw:preset([prompt('a')])}).entries[0],b=clone(a);
+  b.enabled=false;b.role='user';b.raw.injection_position=1;b.raw.injection_depth=3;
+  const differences=settingDifferences(a,b);
+  assert.deepEqual(differences.map(x=>x.label),['条目开关','角色','插入位置','深度']);
+  assert.deepEqual(differences[0],{key:'enabled',label:'条目开关',left:'启用',right:'停用'});
+  assert.equal(differences[1].right,'用户');assert.equal(differences[2].right,'聊天内');
+  const r=makeDocument(ref('r','regex','global'),{raw:[regex('r')]}).entries[0],s=clone(r);
+  s.raw.placement=[5,6];s.raw.substituteRegex=0;s.raw.markdownOnly=false;
+  const delta=settingDifferences(r,s);
+  assert.deepEqual(delta.map(x=>x.key),['placement','substitute','markdown']);
+  assert.equal(delta[0].right,'世界书、推理');assert.equal(delta[1].right,'不替换');
+  assert.deepEqual(settingDifferences(r,clone(r)),[]);assert.deepEqual(settingDifferences(r),[]);
+});
+
+test('原生正则拖放更新顺序和组归属，保留开关、未知字段和未同步方案',async()=>{
+  const r=ref('R','regex','global'),raw=[regex('a'),{...regex('b'),disabled:true},regex('c'),regex('d')];
+  const snapshot={raw,own:{version:1,native:true,groups:[{id:'g1',name:'一',members:['a','b'],enabled:false},{id:'g2',name:'二',members:['c'],enabled:true}],sync:[]},transfer:{version:2,groups:[{id:'legacy',name:'原记录',scope:'global',memberIds:['a','d']}]}};
+  const h=quickHarness([r],{[r.key]:snapshot});
+  await h.operations.reorderRegex(r,'b','c',false,'g2');
+  assert.deepEqual(h.data[r.key].raw.map(x=>x.id),['a','b','c','d']);
+  assert.deepEqual(h.data[r.key].own.groups.map(g=>g.members),[['a'],['c','b']]);
+  await h.operations.reorderRegex(r,'a',undefined,false,'g2');
+  assert.deepEqual(h.data[r.key].raw.map(x=>x.id),['b','c','a','d']);
+  await h.operations.reorderRegex(r,'b','d',true,'');
+  assert.deepEqual(h.data[r.key].raw.map(x=>x.id),['c','a','d','b']);
+  assert.ok(h.data[r.key].own.groups.every(g=>!g.members.includes('b')));
+  for(const item of h.data[r.key].raw)assert.deepEqual(item,raw.find(x=>x.id===item.id));
+  assert.deepEqual(h.data[r.key].transfer,snapshot.transfer);assert.equal(h.commits(),3);
+  await h.operations.reorderRegex(r,'b','b');assert.equal(h.commits(),3);
+});
+
+test('原生正则拖放拒绝失效目标、工坊未保存改动和并发修改',async()=>{
+  const r=ref('R','regex','global'),snapshot={raw:[regex('a'),regex('b')]};
+  const h=quickHarness([r],{[r.key]:snapshot});
+  await assert.rejects(h.operations.reorderRegex(r,'a','missing'),/条目已变化/);
+  await assert.rejects(h.operations.reorderRegex(r,'missing','a'),/条目已变化/);
+  await assert.rejects(h.operations.reorderRegex(r,'a','b',true,'missing'),/目标分组/);
+  assert.equal(h.commits(),0);
+  const blocked=quickHarness([r],{[r.key]:snapshot},()=>{throw Error('先保存工坊修改')});
+  await assert.rejects(blocked.operations.reorderRegex(r,'a','b',true),/先保存/);assert.equal(blocked.commits(),0);
+  const originalLoad=h.host.load;
+  h.host.load=async ref=>{const old=await originalLoad(ref);h.data[r.key].raw[1].scriptName='外部修改';return old};
+  await assert.rejects(h.operations.reorderRegex(r,'a','b',true));
+  assert.equal(h.commits(),0);assert.equal(h.data[r.key].raw[1].scriptName,'外部修改');
+  assert.deepEqual(h.data[r.key].raw.map(x=>x.id),['a','b']);
+});
 
 function quickHarness(refs, snapshots, guard) {
   const data = clone(snapshots);

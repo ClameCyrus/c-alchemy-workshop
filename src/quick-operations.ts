@@ -103,6 +103,25 @@ export class QuickOperations {
     this.changed([ref]);
     return ids.length;
   }
+  async reorderRegex(ref: Resource, id: string, beforeId?: string, after = false, groupId = '') {
+    if (ref.kind !== 'regex') throw new Error('此拖动仅用于正则');
+    this.guard(ref);
+    const doc = await this.load(ref);
+    if (beforeId === id) return;
+    if (groupId && !doc.state.groups.some(g => g.id === groupId)) throw new Error('目标分组已不存在');
+    if (!doc.entries.some(e => e.id === id) || (beforeId && !doc.entries.some(e => e.id === beforeId))) throw new Error('条目已变化，请重试');
+    if (groupId && !beforeId) {
+      const group = doc.state.groups.find(g => g.id === groupId)!;
+      beforeId = doc.entries.filter(e => e.id !== id && group.members.includes(e.id)).at(-1)?.id;
+      after = !!beforeId;
+    }
+    const moved = transferEntries(doc, doc, [id], 'move', beforeId, after, groupId || undefined);
+    assignGroup(doc, moved, groupId || undefined);
+    // Preserve other schemes; serialize writes only the schemes explicitly chosen for synchronization.
+    this.guard(ref);
+    await saveDocuments(this.host, [doc]);
+    this.changed([ref]);
+  }
   async erase(ref: Resource, ids: string[], detach = false) {
     const doc = await this.load(ref);
     if (ids.some(id => ![...doc.entries, ...doc.unused].some(e => e.id === id))) throw new Error('条目已不存在');

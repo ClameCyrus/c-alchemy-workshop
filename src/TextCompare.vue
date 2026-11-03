@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { Entry, Side } from './types';
+import { settingDifferences } from './entry-settings';
 const props = defineProps<{ left?: Entry; right?: Entry; names: Record<Side, string>; initialPage: Side }>();
 const emit = defineEmits<{ close: []; edit: [side: Side] }>();
 const dialog = ref<HTMLDialogElement>(), page = ref<Side>(props.initialPage);
 const parts = ref<[number, string][] | null>(null);
+const differences = computed(() => settingDifferences(props.left, props.right));
 const sides = computed(() => (['left', 'right'] as Side[]).filter(side => props[side]));
 const columns = computed(() => Object.fromEntries(sides.value.map(side => [side,
   parts.value ? parts.value.filter(([op]) => side === 'left' ? op <= 0 : op >= 0) : [[0, props[side]!.content]],
@@ -34,6 +36,9 @@ onBeforeUnmount(() => { clearTimeout(timer); dialog.value?.close(); if (previous
     <main :class="{single:sides.length===1}">
       <section v-for="side in sides" :key="side" :data-side="side" :class="{'reader-hidden':page!==side}">
         <div class="reader-heading"><div><small :title="names[side]">{{ names[side] }}</small><strong :title="props[side]!.name">{{ props[side]!.name }}</strong></div><button @click="emit('edit',side)">编辑</button></div>
+        <dl v-if="differences.length" class="settings-differences" aria-label="设置差异">
+          <div v-for="row in differences" :key="row.key"><dt>{{ row.label }}</dt><dd>{{ row[side] }}</dd></div>
+        </dl>
         <pre tabindex="0"><template v-for="([op,text],i) in columns[side]" :key="i"><mark v-if="op" :class="op>0?'added':'removed'">{{ text }}</mark><span v-else>{{ text }}</span></template></pre>
       </section>
     </main>
@@ -50,5 +55,6 @@ onBeforeUnmount(() => { clearTimeout(timer); dialog.value?.close(); if (previous
 .prw-text-reader pre{margin:0;padding:20px;flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;font:14px/1.75 ui-monospace,Consolas,monospace;color:var(--prw-text);background:transparent;border:0}
 .prw-text-reader mark{color:inherit;background:color-mix(in srgb,var(--prw-exact) 24%,transparent)}.prw-text-reader mark.removed{background:color-mix(in srgb,var(--prw-danger) 22%,transparent)}
 .reader-tabs{display:none}
+.settings-differences{display:grid;gap:4px;margin:0;padding:10px 16px;background:var(--prw-inset);border-bottom:1px solid var(--prw-border);max-height:26%;overflow:auto;flex:none;font-size:12px}.settings-differences>div{display:grid;grid-template-columns:6em minmax(0,1fr);gap:8px}.settings-differences dt{color:var(--prw-muted)}.settings-differences dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--prw-text)}
 @media(max-width:760px){.prw-text-reader{inset:0;width:100vw;height:100dvh;border-radius:0}.prw-text-reader>main{display:flex}.prw-text-reader section{flex:1}.prw-text-reader section.reader-hidden{display:none}.prw-text-reader section+section{border-left:0}.reader-tabs{display:flex;gap:5px;padding:6px 10px;border-bottom:1px solid var(--prw-border)}.reader-tabs button{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.reader-tabs button.active{border-color:var(--prw-accent);background:var(--prw-active)}.prw-text-reader pre{padding:14px;font-size:13px}.reader-heading{padding:10px}.prw-text-reader>header{padding:10px}}
 </style>

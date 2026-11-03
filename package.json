@@ -14,7 +14,7 @@
     "build": "node build.cjs",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "node --test tests/core.test.cjs",
-    "test:ui": "node tests/ui.cjs && node tests/revisions.cjs",
+    "test:ui": "node tests/ui.cjs && node tests/revisions.cjs && node tests/theme-drag.cjs",
     "check:dist": "node scripts/check-dist.cjs"
   },
   "dependencies": {
