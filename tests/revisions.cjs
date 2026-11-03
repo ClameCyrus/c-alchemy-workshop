@@ -23,7 +23,7 @@ const root=path.resolve(__dirname,'..'),out=path.join(root,'verification');
       const text=await p.locator('.prw-text-reader pre').allTextContents();assert.ok(text.every(t=>t.length>40));
       await p.keyboard.press('Escape');await expect(p.locator('.prw-text-reader')).toHaveCount(0);await expect(p.locator('#prw-panel')).toBeVisible();
       await expect(p.locator('.entry.anchor')).toHaveCount(2);
-      await left.locator('[data-entry-id=a0] strong').click();await expect(p.locator('.prw-text-reader')).toBeVisible();
+      await right.locator('[data-entry-id=b1] strong').click();await expect(p.locator('.prw-text-reader')).toBeVisible();
       await p.getByRole('button',{name:'关闭正文对比',exact:true}).click();
     });
     await check('换预设立即清空对应数量和双选状态',async()=>{

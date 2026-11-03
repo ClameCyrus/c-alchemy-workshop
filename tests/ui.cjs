@@ -83,6 +83,7 @@ fs.mkdirSync(out, { recursive: true });
       const names = await right.locator('.entry-top strong').allTextContents();
       assert.deepEqual(names.slice(0, 2), ['世界细节（副本）', '对话节奏（副本）']);
       await page.getByRole('button', { name: /^保存 ·/ }).click();
+      await page.getByRole('alertdialog',{name:'确认保存'}).getByRole('button',{name:'确定',exact:true}).click();
       assert.equal(await page.getByRole('button', { name: '已保存', exact: true }).count(), 1);
     });
     await check('分组选择清理二次确认、备份且不删条目', async () => {
@@ -99,6 +100,7 @@ fs.mkdirSync(out, { recursive: true });
         .getByRole('alertdialog', { name: '清理分组记录' })
         .getByRole('button', { name: '确定', exact: true })
         .click();
+      await page.getByRole('alertdialog',{name:'确认保存'}).getByRole('button',{name:'确定',exact:true}).click();
       await expect(dialog).toHaveCount(0);
       const saved = await page.evaluate(() => window.__PRW_DEMO_DATA__['preset:preset:春日来信']);
       assert.equal(saved.baibai, undefined);
@@ -114,6 +116,7 @@ fs.mkdirSync(out, { recursive: true });
       await right.getByRole('button', { name: '插入末尾 · 2 条', exact: true }).click();
       assert.equal(await left.locator('.entry input[type=checkbox]:checked').count(), 0);
       await page.getByRole('button', { name: /^保存 ·/ }).click();
+      await page.getByRole('alertdialog',{name:'确认保存'}).getByRole('button',{name:'确定',exact:true}).click();
       const saved = await page.evaluate(() => window.__PRW_DEMO_DATA__['regex:preset:春日来信'].raw);
       assert.equal(saved.length, 3);
       assert.ok(saved.slice(1).every(r => r.disabled === true));

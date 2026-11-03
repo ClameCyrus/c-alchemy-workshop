@@ -6,6 +6,8 @@ import { installNativeMenus } from './bridge';
 import { useWorkbench } from './workbench';
 import { sameResource } from './quick-operations';
 import { installGroupRuntime } from './group-runtime';
+import { installPresetLock } from './preset-lock';
+import { VERSION } from './version';
 import type { Host, OpenRequest } from './types';
 
 function init() {
@@ -19,6 +21,7 @@ function init() {
   const vm = app.mount(mount) as unknown as { open: (request: OpenRequest) => void };
   const open = (request: OpenRequest = {}) => vm.open(request);
   const stopRuntime = host.demo ? () => {} : installGroupRuntime();
+  const stopLock = installPresetLock();
   const buttons: HTMLElement[] = [];
   const wand = document.querySelector('#extensionsMenu');
   if (wand) {
@@ -30,7 +33,13 @@ function init() {
     button.tabIndex = 0;
     button.setAttribute('role', 'button');
     button.innerHTML = '<i class="fa-solid fa-flask extensionsMenuExtensionButton" aria-hidden="true"></i><span class="prw-brand-name">Cの炼金工坊</span>';
-    const launch = () => { open(); document.querySelector<HTMLElement>('#extensionsMenuButton')?.click(); };
+    const launch = (event?: Event) => {
+      event?.preventDefault(); event?.stopPropagation();
+      const menu = document.querySelector<HTMLElement>('#extensionsMenu');
+      if (menu && getComputedStyle(menu).display !== 'none') document.querySelector<HTMLElement>('#extensionsMenuButton')?.click();
+      // Let Tavern finish closing its mobile menu before opening our dialog.
+      queueMicrotask(() => open());
+    };
     button.addEventListener('click', launch);
     button.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launch(); } });
     container.append(button);
@@ -68,6 +77,7 @@ function init() {
   });
   const destroy = () => {
     stopRuntime();
+    stopLock();
     cleanMenus();
     app.unmount();
     mount.remove();
@@ -78,7 +88,7 @@ function init() {
   window.__PRW__ = { open, destroy };
   window.addEventListener('pagehide', destroy);
   if (host.demo) open();
-  console.info('[Cの炼金工坊] 0.1.0 已加载');
+  console.info(`[Cの炼金工坊] ${VERSION} 已加载`);
 }
 // jQuery ready also works when the extension is loaded after the page has initialized.
 const jq = (window as any).jQuery;

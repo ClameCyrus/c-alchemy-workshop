@@ -13,10 +13,37 @@ const core = require('../src/core.ts');
 const { NativeHost, saveDocuments } = require('../src/native.ts');
 const { QuickOperations } = require('../src/quick-operations.ts');
 const { settingDifferences } = require('../src/entry-settings.ts');
+const { summarizeChanges, reviewSignature } = require('../src/change-summary.ts');
+const { browseRows } = require('../src/browse-rows.ts');
 const { gateRegexFlag, gatePromptCollection, nativeRegexRead, installGroupRuntime } = require('../src/group-runtime.ts');
 const { nativeModel } = require('../src/native-model.ts');
 const { createPinia, setActivePinia } = require('pinia');
 const { useWorkbench } = require('../src/workbench.ts');
+
+test('保存预览列出条目、顺序、分组、清理及写回变化，生成预览不修改数据',()=>{
+  const original=preset([prompt('a'),prompt('b'),prompt('c')]);
+  const doc=makeDocument(ref('保存测试'),{raw:original,own:{version:1,native:true,groups:[{id:'g',name:'旧组',members:['a','b'],collapsed:false,enabled:true}],sync:[],suppressed:[]}});
+  const first=doc.entries[0];first.name='改名';first.content+='新增正文';first.role='user';first.raw.injection_depth=8;
+  doc.entries=[doc.entries[2],first,entryFrom(prompt('new'),'preset')];doc.unused.push({...doc.entries[0],id:'unused',unused:true});
+  doc.state.groups[0]={...doc.state.groups[0],name:'新组',members:['a'],enabled:false};doc.cleanup=['transfer'];doc.state.sync=['baibai'];
+  const untouched=stable(doc),summary=summarizeChanges(doc);assert.equal(stable(doc),untouched);
+  assert.ok(summary.lines.some(l=>/新增「new」/.test(l)));assert.ok(summary.lines.some(l=>/删除「b」/.test(l)));
+  assert.ok(summary.lines.some(l=>/修改「改名」.*名称.*正文.*角色.*深度/.test(l)));
+  assert.ok(summary.lines.includes('调整条目顺序'));assert.ok(summary.lines.some(l=>/修改分组「新组」.*停用.*成员/.test(l)));
+  assert.ok(summary.lines.some(l=>l.includes('清理分组记录：预设转移工具')));assert.ok(summary.lines.includes('分组写回：柏宝箱'));
+  const stamp=reviewSignature([doc]);doc.entries[0].enabled=false;assert.notEqual(reviewSignature([doc]),stamp);
+  assert.deepEqual(original,preset([prompt('a'),prompt('b'),prompt('c')]));
+});
+
+test('浏览分组内联显示、默认展开、按原顺序分段，折叠不改原始组记录',()=>{
+  const entries=['a','b','c','d'].map(id=>entryFrom(prompt(id),'preset'));
+  const groups=[{id:'g',name:'一组',members:['a','c'],collapsed:true,enabled:true}],copy=stable(groups);
+  const all=browseRows(entries,groups,()=>false);
+  assert.deepEqual(all.map(r=>r.type==='entry'?r.entry.id:`组${r.count}`),['组2','a','b','组2','c','d']);
+  assert.deepEqual(browseRows(entries,groups,()=>true).map(r=>r.type==='entry'?r.entry.id:'组'),['组','b','组','d']);
+  assert.equal(browseRows(entries,groups,()=>true,true).filter(r=>r.type==='entry').length,4);
+  assert.equal(browseRows(entries,[],()=>true).filter(r=>r.type==='group').length,0);assert.equal(stable(groups),copy);
+});
 
 test('正文对比列出预设和正则的设置差异，值能直接阅读',()=>{
   const a=makeDocument(ref('a'),{raw:preset([prompt('a')])}).entries[0],b=clone(a);

@@ -6,10 +6,12 @@ const View = z.object({
   relation: z.string().default('all'), unused: z.boolean().default(false),
   search: z.object({ left: z.string(), right: z.string() }).default({ left: '', right: '' }),
   groups: z.object({ left: z.string(), right: z.string() }).default({ left: '', right: '' }),
+  folds: z.record(z.string(), z.boolean()).default({}),
 }).prefault({});
 const Color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const Preferences = z.object({
   grouping: z.boolean().default(true),
+  presetLock: z.boolean().default(false),
   kind: z.enum(['preset', 'regex']).default('preset'),
   operation: z.enum(['browse', 'drag', 'insert']).default('browse'),
   transfer: z.enum(['copy', 'move']).default('copy'),

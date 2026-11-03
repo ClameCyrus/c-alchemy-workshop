@@ -1,6 +1,6 @@
 {
   "name": "c-alchemy-workshop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "ClameCyrus",
   "private": true,
   "packageManager": "pnpm@10.30.1",
@@ -14,7 +14,7 @@
     "build": "node build.cjs",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "node --test tests/core.test.cjs",
-    "test:ui": "node tests/ui.cjs && node tests/revisions.cjs && node tests/theme-drag.cjs",
+    "test:ui": "node tests/ui.cjs && node tests/revisions.cjs && node tests/theme-drag.cjs && node tests/release-011.cjs",
     "check:dist": "node scripts/check-dist.cjs"
   },
   "dependencies": {

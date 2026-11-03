@@ -8,6 +8,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 assert.equal(manifest.display_name, 'Cの炼金工坊');
 assert.equal(manifest.author, 'ClameCyrus');
 assert.equal(manifest.version, pkg.version);
+assert.ok(fs.readFileSync(path.join(root,'src/version.ts'),'utf8').includes(`'${pkg.version}'`), 'UI version must match the manifest');
 assert.equal(manifest.homePage, 'https://github.com/ClameCyrus/c-alchemy-workshop');
 for (const field of ['js', 'css']) {
   assert.equal(typeof manifest[field], 'string');

@@ -21,6 +21,10 @@ import { useWorkbench } from './workbench';
 import { applyAppearance } from './preferences';
 import { useComparison } from './comparison';
 import TextCompare from './TextCompare.vue';
+import { browseRows } from './browse-rows';
+import { summarizeChanges, reviewSignature } from './change-summary';
+import { VERSION } from './version';
+import type { ChangeSummary } from './change-summary';
 import type { Entry, Host, Match, OpenRequest, Provider, Side, WorkDocument } from './types';
 
 const props = defineProps<{ host: Host }>();
@@ -43,6 +47,12 @@ const {
 } = storeToRefs(state);
 const view = computed(() => state.preferences.views[kind.value]);
 const opened = ref(false), appearanceDialog = ref(false), threshold = ref(0.5);
+const panel = ref<HTMLDialogElement>();
+watch(opened, async value => {
+  if (!value) return;
+  await nextTick();
+  if (opened.value && panel.value && !panel.value.open) panel.value.showModal();
+}, { flush: 'post' });
 const dual = computed({ get: () => view.value.dual, set: value => { view.value.dual = value; } });
 const filter = computed({ get: () => view.value.filter, set: value => { view.value.filter = value; } });
 const relationFilter = computed({ get: () => view.value.relation, set: value => { view.value.relation = value; } });
@@ -74,6 +84,7 @@ const confirmBox = ref<{
   title: string;
   message: string;
   destructive: boolean;
+  changes?: ChangeSummary[];
   text?: string;
   value?: string;
   resolve: (value: string | boolean | null) => void;
@@ -179,14 +190,6 @@ const lists = computed(() => {
       if (query && !searchable(entry).includes(query)) return false;
       const group = groupOf(doc, entry.id);
       if (
-        state.preferences.grouping && group?.collapsed &&
-        !query &&
-        !groupFilter.value[side] &&
-        !rangeStart.value &&
-        !(anchor.value && anchor.value.key !== doc.ref.key)
-      )
-        return false;
-      if (
         state.preferences.grouping && groupFilter.value[side] &&
         (groupFilter.value[side] === '__ungrouped' ? !!group : group?.id !== groupFilter.value[side])
       )
@@ -217,6 +220,32 @@ const lists = computed(() => {
   }
   return output;
 });
+function foldKey(doc: WorkDocument, id: string) { return `${doc.ref.key}/${id}`; }
+function toggleGroup(doc: WorkDocument, id: string) {
+  const key = foldKey(doc, id);
+  view.value.folds[key] = !view.value.folds[key];
+}
+const displayRows = computed(() => Object.fromEntries((['left', 'right'] as Side[]).map(side => {
+  const doc = docs.value[side];
+  return [side, doc ? browseRows(lists.value[side], state.preferences.grouping ? doc.state.groups : [],
+    id => !!view.value.folds[foldKey(doc, id)],
+    !!searchQuery.value[side].trim() || !!rangeStart.value || !!(anchor.value && anchor.value.key !== doc.ref.key && relationFilter.value !== 'off'),
+  ) : []];
+})) as Record<Side, ReturnType<typeof browseRows>>);
+async function confirmSave(onlyKey?: string) {
+  const documents = state.dirty.filter(d => !onlyKey || d.ref.key === onlyKey);
+  if (!documents.length || busy.value || confirmBox.value) return false;
+  const reviewed = reviewSignature(documents);
+  const ok = await new Promise<boolean>(resolve => {
+    confirmBox.value = { title: '确认保存', message: '', destructive: false,
+      changes: documents.map(summarizeChanges), resolve: value => resolve(value === true) };
+  });
+  if (!ok) return false;
+  if (reviewed !== reviewSignature(state.dirty.filter(d => !onlyKey || d.ref.key === onlyKey))) {
+    error.value = '改动已变化，请重新确认保存'; return false;
+  }
+  return state.save(onlyKey);
+}
 function ask(title: string, message: string, destructive = false): Promise<boolean> {
   return new Promise(resolve => {
     confirmBox.value = { title, message, destructive, resolve: value => resolve(value === true) };
@@ -360,6 +389,9 @@ async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
     rangeStart.value = null;
     notice.value = '已分组';
     return;
+  }
+  if (dual.value && anchor.value?.key === doc.ref.key && anchor.value.id === entry.id) {
+    clearComparison(); return;
   }
   const changingAnchor = anchor.value?.key === doc.ref.key && anchor.value.id !== entry.id;
   if (changingAnchor) { picked.value = { left: '', right: '' }; readerOpen.value = false; relationFilter.value = 'all'; }
@@ -578,7 +610,7 @@ async function applyGroups() {
     doc.state.native = true;
     doc.dirty = true;
   });
-  if (!state.error && await state.save(doc.ref.key)) groupDialog.value = null;
+  if (!state.error && await confirmSave(doc.ref.key)) groupDialog.value = null;
 }
 async function groupAction(doc: WorkDocument, id: string, action: 'rename' | 'remove') {
   const group = doc.state.groups.find(g => g.id === id);
@@ -690,11 +722,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="opened" id="prw-panel" class="prw-overlay" @click.self="close">
-    <section class="prw-window" role="dialog" aria-modal="true" aria-label="Cの炼金工坊">
+  <dialog v-if="opened" ref="panel" id="prw-panel" class="prw-overlay" aria-label="Cの炼金工坊" @click.self="close" @cancel.prevent="close" @keydown.esc.stop.prevent="keydown">
+    <section class="prw-window">
       <header class="prw-header">
         <div class="brand">
-          <i class="brand-icon fa-solid fa-flask" aria-hidden="true"></i><strong class="prw-brand-name">Cの炼金工坊</strong><small>0.1.0</small
+          <i class="brand-icon fa-solid fa-flask" aria-hidden="true"></i><strong class="prw-brand-name">Cの炼金工坊</strong><small>{{ VERSION }}</small
           ><small v-if="host.demo" class="demo-badge">演示</small>
         </div>
         <div class="header-actions">
@@ -706,7 +738,7 @@ onBeforeUnmount(() => {
             class="discard-action" :disabled="busy" title="放弃本次改动"
             @click="async () => { if (await ask('放弃修改', '放弃所有未保存修改？', true)) await state.discard(); }"
           >放弃</button>
-          <button class="primary" :disabled="!dirty.length || busy" @click="state.save()">
+          <button class="primary" :disabled="!dirty.length || busy" @click="confirmSave()">
             {{ busy ? '保存中…' : dirty.length ? `保存 · ${dirty.length}` : '已保存' }}</button
           ><button aria-label="关闭" title="关闭" @click="close">✕</button>
         </div>
@@ -817,7 +849,7 @@ onBeforeUnmount(() => {
               </select>
             </div>
             <div class="list-toolbar">
-              <button @click="allSelect(side)">多选</button
+              <button @click="allSelect(side)">全选</button
               ><small
                 >{{ lists[side].length }} 条<span v-if="selected[docs[side].ref.key]?.length">
                   · 已选 {{ selected[docs[side].ref.key].length }}</span
@@ -840,31 +872,29 @@ onBeforeUnmount(() => {
               @dragleave="leaveDrop($event)"
               @drop.self="drop($event, docs[side])"
             >
-              <div v-if="state.preferences.grouping && docs[side].state.groups.length" class="group-chips">
+              <template v-for="row in displayRows[side]" :key="row.key">
+              <template v-if="row.type === 'group'">
                 <div
-                  v-for="g in docs[side].state.groups"
+                  v-for="g in [row.group]"
                   :key="g.id"
-                  class="group-chip"
+                  class="group-chip browse-group"
+                  :data-group-id="g.id"
                   :class="{'drop-group':dropTarget?.key === docs[side].ref.key && dropTarget.groupId === g.id}"
                   @dragover.stop="dragOver($event, docs[side], undefined, g.id)"
                   @dragenter.stop="dragOver($event, docs[side], undefined, g.id)"
                   @drop.stop="drop($event, docs[side], undefined, false, g.id)"
                 >
                   <button
-                    :aria-label="`${g.collapsed ? '展开' : '折叠'} ${g.name}`"
-                    @click="
-                      state.change(() => {
-                        g.collapsed = !g.collapsed;
-                        docs[side].dirty = true;
-                      })
-                    "
+                    :aria-label="`${row.collapsed ? '展开' : '折叠'} ${g.name}`"
+                    :aria-expanded="!row.collapsed"
+                    @click="toggleGroup(docs[side], g.id)"
                   >
-                    {{ g.collapsed ? '▸' : '▾' }}</button
+                    {{ row.collapsed ? '▸' : '▾' }}</button
                   ><button
-                    :class="{ active: groupFilter[side] === g.id }"
-                    @click="groupFilter[side] = groupFilter[side] === g.id ? '' : g.id"
+                    class="browse-group-name"
+                    @click="toggleGroup(docs[side], g.id)"
                   >
-                    {{ g.name }} <small>{{ g.members.length }}</small>
+                    {{ g.name }} <small>{{ row.count }}</small>
                   </button>
                   <button :aria-label="`${g.enabled ? '停用' : '启用'} ${g.name}`" :title="g.enabled ? '停用本组，保留条目开关' : '启用本组，保留条目开关'" @click="state.change(() => { g.enabled = !g.enabled; docs[side].state.native = true; docs[side].dirty = true; })">{{ g.enabled ? '停用' : '启用' }}</button>
                   <details>
@@ -877,9 +907,10 @@ onBeforeUnmount(() => {
                     </div>
                   </details>
                 </div>
-              </div>
+              </template>
+              <template v-else>
               <article
-                v-for="entry in lists[side]"
+                v-for="entry in [row.entry]"
                 :key="entry.id"
                 class="entry"
                 :class="[
@@ -1024,6 +1055,8 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
               </article>
+              </template>
+              </template>
               <div v-if="!lists[side].length" class="empty-state">{{ comparing ? '对比中…' : '没有找到条目' }}</div>
               <button
                 v-if="operation === 'insert' && sourceIds.length"
@@ -1182,6 +1215,7 @@ onBeforeUnmount(() => {
         <section class="appearance-dialog">
           <header><strong>设置</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
           <label class="compact-check"><input v-model="state.preferences.grouping" type="checkbox" />启用分组功能</label>
+          <label class="compact-check"><input v-model="state.preferences.presetLock" type="checkbox" />启用预设条目锁</label>
           <select v-model="state.preferences.appearance.mode" aria-label="配色方式">
             <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
           </select>
@@ -1203,6 +1237,12 @@ onBeforeUnmount(() => {
             <strong>{{ confirmBox.title }}</strong>
           </header>
           <p v-if="confirmBox.message">{{ confirmBox.message }}</p>
+          <div v-if="confirmBox.changes" class="save-review">
+            <section v-for="(change,i) in confirmBox.changes" :key="i">
+              <strong>{{ change.name }} <small>{{ change.scope }}</small></strong>
+              <ul><li v-for="(line,j) in change.lines" :key="j">{{ line }}</li></ul>
+            </section>
+          </div>
           <label v-if="confirmBox.text"
             >{{ confirmBox.text }}<input v-model="confirmBox.value" autofocus required
           /></label>
@@ -1213,7 +1253,7 @@ onBeforeUnmount(() => {
         </form>
       </div>
     </section>
-  </div>
+  </dialog>
 </template>
 
 <style scoped>

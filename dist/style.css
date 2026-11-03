@@ -56,3 +56,23 @@
 #prw-mount .prw-text-reader pre{color:var(--prw-text)!important;background:transparent!important;border:0!important;text-shadow:none!important;box-shadow:none!important;transform:none!important}
 #prw-mount .prw-text-reader pre::before,#prw-mount .prw-text-reader pre::after{content:none!important;display:none!important}
 @media(max-width:760px){#prw-mount #prw-panel.prw-overlay{padding:0!important}#prw-mount #prw-panel .prw-window{border-radius:0!important}#prw-mount #prw-panel select{font-size:12px!important}}
+
+/* Keep global nav/dialog styles out of the workshop, including the top-layer mobile opener. */
+#prw-mount #prw-panel{width:100vw!important;height:100dvh!important;max-width:100vw!important;max-height:100dvh!important;margin:0!important;border:0!important;box-shadow:none!important;text-shadow:none!important}
+#prw-mount #prw-panel:not([open]){display:none!important}
+#prw-mount #prw-panel::backdrop{background:transparent}
+#prw-mount #prw-panel *{text-shadow:none!important}
+#prw-mount #prw-panel :is(.prw-toolbar,.mobile-pages,.prw-header,.prw-footer,.resource-bar,.search-bar,.list-toolbar),#prw-mount .prw-text-reader :is(header,nav){background:var(--prw-bg)!important;color:var(--prw-text)!important;border-color:var(--prw-border)!important;box-shadow:none!important;text-shadow:none!important}
+#prw-mount #prw-panel :is(.appearance-dialog,.edit-dialog,.group-dialog,.confirm-dialog)>header{background:transparent!important;color:var(--prw-text)!important;border-color:var(--prw-border)!important;box-shadow:none!important}
+#prw-mount #prw-panel .browse-group{display:flex;align-items:center;width:auto;margin:9px 3px 2px;padding:3px;border:0;border-bottom:1px solid var(--prw-border);background:var(--prw-inset);border-radius:6px!important;min-width:0}
+#prw-mount #prw-panel .browse-group-name{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#prw-mount #prw-panel .browse-group>button{--prw-control-bg:transparent;--prw-control-border:transparent}
+#prw-mount #prw-panel .save-review{overflow:auto;min-height:0;max-height:55dvh;overscroll-behavior:contain;display:grid;gap:12px;font-size:12px}
+#prw-mount #prw-panel .save-review strong{overflow-wrap:anywhere;color:var(--prw-text)}
+#prw-mount #prw-panel .save-review small{font-weight:normal;color:var(--prw-muted)}
+#prw-mount #prw-panel .save-review ul{margin:5px 0 0;padding-left:20px;display:grid;gap:5px}
+#prw-mount #prw-panel .save-review li{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--prw-text)}
+.prw-preset-lock{display:inline-flex!important;align-items:center;justify-content:center;width:26px!important;height:26px!important;min-width:26px!important;padding:0!important;margin:0 0 0 5px!important;border:0!important;background:transparent!important;color:inherit!important;cursor:pointer;flex:none}
+.prw-preset-lock[aria-pressed=true]{color:var(--SmartThemeQuoteColor,var(--prw-accent))!important}
+.prw-preset-locked :is(.drag-handle,.completion_prompt_manager_prompt_draggable){cursor:not-allowed!important}
+.prw-preset-locked .drag-handle{opacity:.25!important}

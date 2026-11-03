@@ -11,6 +11,9 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
   watch(() => preferences.grouping, () => {
     if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:grouping-preference'));
   });
+  watch(() => preferences.presetLock, () => {
+    if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:lock-preference'));
+  });
   const documents = reactive<Record<string, WorkDocument>>({});
   const kind = ref<Kind>(preferences.kind);
   const keys = reactive({ left: preferences.views[kind.value].left, right: preferences.views[kind.value].right });
