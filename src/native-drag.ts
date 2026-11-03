@@ -1,8 +1,13 @@
 import type { Resource } from './types';
 
 let active = false;
+const holds = new Set<object>();
+export function holdNativeDrag() {
+  const token = {}; holds.add(token);
+  return () => { holds.delete(token); };
+}
 export function nativeDragBusy() {
-  return active || !!document.querySelector('.regex-script-label.ui-sortable-helper,.regex-script-label.sortable-drag,#completion_prompt_manager_list .ui-sortable-helper');
+  return active || holds.size > 0 || !!document.querySelector('.regex-script-label.ui-sortable-helper,.regex-script-label.sortable-drag,#completion_prompt_manager_list .ui-sortable-helper');
 }
 interface Position { id?: string; after: boolean; groupId: string; element: HTMLElement }
 export function installNativeRegexDrag(

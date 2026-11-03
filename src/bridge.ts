@@ -5,6 +5,7 @@ import type { QuickSource } from './quick-operations';
 import { groupingEnabled } from './preferences';
 import { QuickOperations } from './quick-operations';
 import { installNativeRegexDrag, nativeDragBusy } from './native-drag';
+import { installNativePresetDrag } from './native-preset-drag';
 
 export function installNativeMenus(host: Host, open: (request: OpenRequest) => void, guard: (ref: Resource) => void = () => {}): () => void {
   let groups: ReturnType<typeof installNativeGroupViews> | undefined;
@@ -196,6 +197,8 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
   const operations = new QuickOperations(host, guard, refs => groups?.invalidate(refs));
   const stopDrag = installNativeRegexDrag(row => currentRef(row, 'regex'),
     (ref, id, target) => operations.reorderRegex(ref, id, target.id, target.after, target.groupId), quick.fail);
+  const stopPresetDrag = installNativePresetDrag(row => currentRef(row, 'preset'), guard,
+    (ref, id, groupId, order) => operations.nativePresetGroup(ref, id, groupId, order), quick.fail);
   document.addEventListener('prw:native-drag-start', close, { signal });
   document.addEventListener('prw:native-drag-end', scan, { signal });
   scan();
@@ -231,6 +234,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
   return () => {
     close();
     stopDrag();
+    stopPresetDrag();
     groups?.destroy();
     quick.destroy();
     abort.abort();

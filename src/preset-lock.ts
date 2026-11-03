@@ -1,4 +1,5 @@
 import { readPreferences } from './preferences';
+import { nativeDragBusy } from './native-drag';
 
 const KEY = 'c-alchemy-workshop:preset-lock:v1';
 const ROW = '.completion_prompt_manager_prompt[data-pm-identifier]';
@@ -28,6 +29,7 @@ export function installPresetLock() {
   function scan() {
     queued = false; if (stopped) return;
     if (!enabled) { button?.remove(); button = undefined; restore(); return; }
+    if (nativeDragBusy()) return;
     const root = document.querySelector<HTMLElement>('#completion_prompt_manager_list');
     const header = document.querySelector('.completion_prompt_manager_header_advanced') || root?.parentElement?.querySelector('.completion_prompt_manager_header');
     if (!button && header) {
@@ -77,6 +79,7 @@ export function installPresetLock() {
   const observe = () => { observer.disconnect(); const root = document.querySelector('#openai_settings'); if (enabled && root) observer.observe(root, { childList: true, subtree: true }); };
   document.addEventListener('prw:lock-preference', () => { enabled = readPreferences().presetLock; observe(); scan(); }, { signal });
   document.addEventListener('prw:resources-saved', schedule, { signal });
+  document.addEventListener('prw:native-drag-end', schedule, { signal });
   observe(); scan();
   return () => { stopped = true; abort.abort(); observer.disconnect(); button?.remove(); restore(); };
 }

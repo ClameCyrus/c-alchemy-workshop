@@ -153,7 +153,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     if (queued) return;
     queued = true;
     queueMicrotask(() => {
-      queued = false; if (stopped) return;
+      queued = false; if (stopped || nativeDragBusy()) return;
       epoch++; loading.clear(); for (const key of pending) cache.delete(key); pending.clear(); scan();
     });
   }
@@ -180,7 +180,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     if (!model || model.ref.name !== ref.name || model.ref.avatar !== ref.avatar) return;
     const updated = { ...model, groups: model.groups.map(g => g.id === id ? { ...g, enabled } : g) };
     cache.set(ref.key, updated);
-    const view = views.get(ref.key); if (view) { view.model = updated; paint(view, id); }
+    const view = views.get(ref.key); if (view) { view.model = updated; if (!nativeDragBusy()) paint(view, id); }
   };
   const preference = () => { invalidate(); scan(); };
   document.addEventListener('prw:resources-saved', saved);

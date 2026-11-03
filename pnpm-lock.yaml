@@ -24,6 +24,12 @@ importers:
       css-loader:
         specifier: ^7.1.4
         version: 7.1.5(webpack@5.112.2(postcss@8.5.32))
+      jquery:
+        specifier: 3.5.1
+        version: 3.5.1
+      jquery-ui-dist:
+        specifier: 1.13.2
+        version: 1.13.2
       ts-loader:
         specifier: ^9.6.2
         version: 9.6.2(loader-utils@1.4.2)(typescript@6.0.3)(webpack@5.112.2(postcss@8.5.32))
@@ -325,6 +331,12 @@ packages:
   jest-worker@27.5.1:
     resolution: {integrity: sha512-7vuh85V5cdDofPyxn58nrPjBktZo0u9x1g8WtjQol+jZDaE+fhN+cIvTj11GndBnMnyfrUOG1sZQxCdjKh+DKg==}
     engines: {node: '>= 10.13.0'}
+
+  jquery-ui-dist@1.13.2:
+    resolution: {integrity: sha512-oVDRd1NLtTbBwpRKAYdIRgpWVDzeBhfy7Gu0RmY6JEaZtmBq6kDn1pm5SgDiAotrnDS+RoTRXO6xvcNTxA9tOA==}
+
+  jquery@3.5.1:
+    resolution: {integrity: sha512-XwIBPqcMn57FxfT+Go5pzySnm4KWkT1Tv7gjrpT1srtf8Weynl6R273VJ5GjkRb51IzMp5nbaPjJXMWeju2MKg==}
 
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
@@ -929,6 +941,12 @@ snapshots:
       '@types/node': 26.6.6
       merge-stream: 2.0.0
       supports-color: 8.1.1
+
+  jquery-ui-dist@1.13.2:
+    dependencies:
+      jquery: 3.5.1
+
+  jquery@3.5.1: {}
 
   json-schema-traverse@1.0.0: {}
 

@@ -20,6 +20,32 @@ const { nativeModel } = require('../src/native-model.ts');
 const { createPinia, setActivePinia } = require('pinia');
 const { useWorkbench } = require('../src/workbench.ts');
 
+test('原生预设排序完成后只写组归属，保留原生顺序、开关、系统条目和独立方案',async()=>{
+  const r={...ref('Native'),live:true};
+  const raw=preset([{...prompt('marker'),marker:true},prompt('b'),prompt('a')]);raw.prompt_order[0].order[2].enabled=false;
+  const snapshot={raw,own:{version:1,native:true,groups:[{id:'one',name:'一',members:['a','marker'],enabled:true},{id:'two',name:'二',members:['b'],enabled:false}],sync:[],suppressed:[]},transfer:[{id:'legacy',name:'另一份',memberIdentifiers:['a','marker']}]};
+  const h=quickHarness([r],{[r.key]:snapshot});
+  await h.operations.nativePresetGroup(r,'marker','two',['marker','b','a']);
+  assert.deepEqual(h.data[r.key].raw,raw);assert.deepEqual(h.data[r.key].transfer,snapshot.transfer);
+  assert.deepEqual(h.data[r.key].own.groups.map(g=>g.members),[['a'],['b','marker']]);
+  await h.operations.nativePresetGroup(r,'marker','two',['marker','b','a']);assert.equal(h.commits(),1);
+  await h.operations.nativePresetGroup(r,'marker','',['marker','b','a']);assert.equal(h.commits(),2);
+  assert.ok(h.data[r.key].own.groups.every(g=>!g.members.includes('marker')));assert.deepEqual(h.data[r.key].raw,raw);
+});
+
+test('原生预设分组拒绝失效顺序、目标和草稿冲突；写入失败保留原生已排顺序',async()=>{
+  const r=ref('Native'),snapshot={raw:preset([prompt('b'),prompt('a')]),own:{version:1,native:true,groups:[{id:'g',name:'组',members:['b'],enabled:true}],sync:[],suppressed:[]}};
+  const h=quickHarness([r],{[r.key]:snapshot});
+  await assert.rejects(h.operations.nativePresetGroup(r,'a','g',['a','b']),/顺序已变化/);
+  await assert.rejects(h.operations.nativePresetGroup(r,'a','missing',['b','a']),/目标分组/);
+  await assert.rejects(h.operations.nativePresetGroup(r,'missing','g',['b','a']),/条目已不存在/);
+  assert.equal(h.commits(),0);
+  const blocked=quickHarness([r],{[r.key]:snapshot},()=>{throw Error('有未保存修改')});
+  await assert.rejects(blocked.operations.nativePresetGroup(r,'a','g',['b','a']),/未保存/);assert.equal(blocked.commits(),0);
+  h.host.commit=async()=>{throw Error('保存失败')};await assert.rejects(h.operations.nativePresetGroup(r,'a','g',['b','a']),/保存失败/);
+  assert.deepEqual(h.data[r.key],snapshot);
+});
+
 test('保存预览列出条目、顺序、分组、清理及写回变化，生成预览不修改数据',()=>{
   const original=preset([prompt('a'),prompt('b'),prompt('c')]);
   const doc=makeDocument(ref('保存测试'),{raw:original,own:{version:1,native:true,groups:[{id:'g',name:'旧组',members:['a','b'],collapsed:false,enabled:true}],sync:[],suppressed:[]}});

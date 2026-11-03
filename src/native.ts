@@ -354,6 +354,7 @@ export async function saveDocuments(
   host: Host,
   documents: WorkDocument[],
   saveOrder: string[] = [],
+  options: { preserveRaw?: boolean } = {},
 ): Promise<WorkDocument[]> {
   const dirty = documents
     .filter(d => d.dirty)
@@ -363,7 +364,11 @@ export async function saveDocuments(
       return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
     });
   if (!dirty.length) return [];
-  await host.commit(dirty.map(doc => ({ doc, snapshot: serialize(doc) })));
+  await host.commit(dirty.map(doc => {
+    const snapshot = serialize(doc);
+    if (options.preserveRaw) snapshot.raw = clone(doc.snapshot.raw);
+    return { doc, snapshot };
+  }));
   // Reload all snapshots after all shared group stores have been committed.
   const result = await Promise.all(dirty.map(async d => makeDocument(d.ref, await host.load(d.ref))));
   try {

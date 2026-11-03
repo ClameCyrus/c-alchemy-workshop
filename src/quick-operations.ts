@@ -122,6 +122,19 @@ export class QuickOperations {
     await saveDocuments(this.host, [doc]);
     this.changed([ref]);
   }
+  async nativePresetGroup(ref: Resource, id: string, groupId: string, order: string[]) {
+    if (ref.kind !== 'preset') throw new Error('此操作仅用于原生预设');
+    this.guard(ref);
+    const doc = await this.load(ref);
+    if (order.length !== doc.entries.length || order.some((id, i) => id !== doc.entries[i].id))
+      throw new Error('预设顺序已变化，已停止写入分组，请重新载入');
+    if (!doc.entries.some(e => e.id === id)) throw new Error('条目已不存在');
+    if (groupId && !doc.state.groups.some(g => g.id === groupId)) throw new Error('目标分组已不存在');
+    if ((doc.state.groups.find(g => g.members.includes(id))?.id || '') === groupId) return;
+    // Native Sortable already saved the order. Only change membership, preserving every native flag.
+    assignGroup(doc, [id], groupId || undefined);
+    this.guard(ref); await saveDocuments(this.host, [doc], [], { preserveRaw: true }); this.changed([ref]);
+  }
   async erase(ref: Resource, ids: string[], detach = false) {
     const doc = await this.load(ref);
     if (ids.some(id => ![...doc.entries, ...doc.unused].some(e => e.id === id))) throw new Error('条目已不存在');
