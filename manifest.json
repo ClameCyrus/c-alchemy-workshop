@@ -8,6 +8,5 @@
   "css": "dist/style.css",
   "author": "ClameCyrus",
   "homePage": "https://github.com/ClameCyrus/c-alchemy-workshop",
-  "version": "0.1.3",
-  "minimum_client_version": "1.19.0"
+  "version": "0.1.3"
 }
