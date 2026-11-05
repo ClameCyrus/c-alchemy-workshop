@@ -6,6 +6,8 @@ import { groupingEnabled } from './preferences';
 import { QuickOperations } from './quick-operations';
 import { installNativeRegexDrag, nativeDragBusy } from './native-drag';
 import { installNativePresetDrag } from './native-preset-drag';
+import { nativeSurface } from './native-surface';
+import { presetTransitionBusy } from './native-preset-refresh';
 
 export function installNativeMenus(host: Host, open: (request: OpenRequest) => void, guard: (ref: Resource) => void = () => {}): () => void {
   let groups: ReturnType<typeof installNativeGroupViews> | undefined;
@@ -52,6 +54,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
   }
   function show(row: HTMLElement, trigger: HTMLElement, kind: 'preset' | 'regex') {
     close();
+    if (kind === 'preset' && presetTransitionBusy()) return;
     const ref = currentRef(row, kind),
       id = row.dataset.pmIdentifier || row.dataset.regexScriptId || row.id;
     if (!ref || !id) return;
@@ -77,7 +80,8 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
       button.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        if (!row.isConnected || currentRef(row, kind)?.key !== sourceKey) {
+        const current = currentRef(row, kind);
+        if (!row.isConnected || current?.key !== sourceKey || current?.name !== ref.name || (kind === 'preset' && presetTransitionBusy())) {
           close();
           return;
         }
@@ -107,7 +111,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     }
     add('删除…', () => quick.erase(ref, id, false, row.querySelector('.regex_script_name,.completion_prompt_manager_prompt_name,.item-name')?.textContent?.trim() || id, trigger), true);
     menu.addEventListener('pointerdown', e => e.stopPropagation());
-    (trigger.closest('#regex_container') || document.body).append(menu);
+    nativeSurface(trigger).append(menu);
     menu.showPopover();
     const rect = trigger.getBoundingClientRect(),
       bounds = menu.getBoundingClientRect();
@@ -230,6 +234,8 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
       .map(k => c?.eventTypes[k])
       .filter(Boolean);
   const invalidate = () => { close(); quick.reset(); groups?.invalidate(); scan(); };
+  document.addEventListener('prw:preset-changing', () => { close(); quick.reset(); }, { signal });
+  document.addEventListener('prw:preset-ready', invalidate, { signal });
   for (const event of events) c.eventSource.on(event, invalidate);
   return () => {
     close();

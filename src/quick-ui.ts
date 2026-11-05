@@ -2,6 +2,7 @@ import { createApp, markRaw } from 'vue';
 import QuickActions from './QuickActions.vue';
 import type { QuickSource } from './quick-operations';
 import type { Host, Resource } from './types';
+import { nativeSurface } from './native-surface';
 
 interface QuickController {
   transfer(sources: QuickSource[], action: 'copy' | 'move', choose: boolean, trigger: HTMLElement): void;
@@ -17,7 +18,7 @@ export function createQuickUI(host: Host, guard: (ref: Resource) => void, change
   const root = document.createElement('div'); root.id = 'prw-quick-root'; document.body.append(root);
   const app = createApp(QuickActions, { host: markRaw(host), guard, changed });
   const vm = app.mount(root) as unknown as QuickController;
-  const place = (trigger: HTMLElement) => { (trigger.closest('#regex_container') || document.body).append(root); };
+  const place = (trigger: HTMLElement) => { nativeSurface(trigger).append(root); };
   return {
     transfer(sources: QuickSource[], action: 'copy' | 'move', choose: boolean, trigger: HTMLElement) {
       place(trigger); vm.transfer(sources, action, choose, trigger);

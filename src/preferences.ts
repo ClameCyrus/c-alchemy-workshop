@@ -12,6 +12,8 @@ const Color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const Preferences = z.object({
   grouping: z.boolean().default(true),
   presetLock: z.boolean().default(false),
+  presetSwitch: z.boolean().default(false),
+  presetRefresh: z.boolean().default(false),
   kind: z.enum(['preset', 'regex']).default('preset'),
   operation: z.enum(['browse', 'drag', 'insert']).default('browse'),
   transfer: z.enum(['copy', 'move']).default('copy'),

@@ -7,6 +7,7 @@ import { useWorkbench } from './workbench';
 import { sameResource } from './quick-operations';
 import { installGroupRuntime } from './group-runtime';
 import { installPresetLock } from './preset-lock';
+import { installNativePresetRefresh } from './native-preset-refresh';
 import { VERSION } from './version';
 import type { Host, OpenRequest } from './types';
 
@@ -22,6 +23,7 @@ function init() {
   const open = (request: OpenRequest = {}) => vm.open(request);
   const stopRuntime = host.demo ? () => {} : installGroupRuntime();
   const stopLock = installPresetLock();
+  const stopPresetRefresh = host.demo ? () => {} : installNativePresetRefresh();
   const buttons: HTMLElement[] = [];
   const wand = document.querySelector('#extensionsMenu');
   if (wand) {
@@ -78,6 +80,7 @@ function init() {
   const destroy = () => {
     stopRuntime();
     stopLock();
+    stopPresetRefresh();
     cleanMenus();
     app.unmount();
     mount.remove();

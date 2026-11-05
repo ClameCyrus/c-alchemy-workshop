@@ -4,6 +4,7 @@ import { groupingEnabled } from './preferences';
 import { retainNativeBodies } from './native-bodies';
 import { nativeDragBusy } from './native-drag';
 import { retainNativePresetGeometry } from './native-preset-geometry';
+import { presetTransitionBusy } from './native-preset-refresh';
 import type { NativeModel } from './native-model';
 import type { Group, Host, Resource } from './types';
 
@@ -127,6 +128,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     const current = scopes(), seen = new Set(current.map(s => s.ref.key));
     for (const key of views.keys()) if (!seen.has(key)) remove(key);
     for (const { root, ref } of current) {
+      if (ref.scope === 'preset' && ref.live && presetTransitionBusy()) continue;
       const cached = cache.get(ref.key);
       if (cached && (cached.ref.name !== ref.name || cached.ref.avatar !== ref.avatar)) { remove(ref.key); cache.delete(ref.key); }
       if (!cache.has(ref.key)) {
@@ -169,6 +171,10 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
       if (owned(record.target)) return false;
       const nodes = [...record.addedNodes, ...record.removedNodes];
       if (nodes.length && nodes.every(owned)) return false;
+      // Token/name/action-only updates do not change group membership or order.
+      const cosmetic = '.prompt_manager_prompt_tokens,.completion_prompt_manager_prompt_name,.prompt-manager-toggle-action';
+      if (record.target instanceof Element && record.target.closest(cosmetic)) return false;
+      if (nodes.length && nodes.every(node => node instanceof Element && node.matches(cosmetic))) return false;
       const target = record.target instanceof Element ? record.target : record.target.parentElement;
       return !!target?.closest('#completion_prompt_manager_list,#saved_regex_scripts,#saved_scoped_scripts,#saved_preset_scripts') ||
         nodes.some(node => node instanceof Element && (node.matches('#completion_prompt_manager_list,#saved_regex_scripts,#saved_scoped_scripts,#saved_preset_scripts') || !!node.querySelector('#completion_prompt_manager_list,#saved_regex_scripts,#saved_scoped_scripts,#saved_preset_scripts')));

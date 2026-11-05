@@ -1216,6 +1216,8 @@ onBeforeUnmount(() => {
           <header><strong>设置</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
           <label class="compact-check"><input v-model="state.preferences.grouping" type="checkbox" />启用分组功能</label>
           <label class="compact-check"><input v-model="state.preferences.presetLock" type="checkbox" />启用预设条目锁</label>
+          <label class="compact-check"><input v-model="state.preferences.presetSwitch" type="checkbox" />优化预设切换并保护保存</label>
+          <label class="compact-check"><input v-model="state.preferences.presetRefresh" type="checkbox" />优化原生条目刷新与拖动</label>
           <select v-model="state.preferences.appearance.mode" aria-label="配色方式">
             <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
           </select>

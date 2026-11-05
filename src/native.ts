@@ -1,5 +1,6 @@
 import { clone, makeDocument, NS, serialize, stable, transformTransfer } from './core';
 import type { Host, Kind, Raw, Resource, Snapshot, WorkDocument } from './types';
+import { assertPresetReady } from './native-preset-refresh';
 
 const ctx = () => {
   const c = window.SillyTavern?.getContext?.();
@@ -21,6 +22,7 @@ function getManager() {
   return m;
 }
 function presetRaw(ref: Resource): Raw {
+  if (ref.live) assertPresetReady();
   const m = getManager();
   const value = ref.live ? m.getPresetList().settings : m.getCompletionPresetByName(ref.name);
   if (!value || !Array.isArray(value.prompts)) throw new Error('预设不存在或格式不支持');
@@ -170,6 +172,7 @@ export class NativeHost implements Host {
     if (ref.scope !== 'preset' || ref.live) return;
     const m = getManager();
     if (m.getSelectedPresetName() !== ref.name) return;
+    assertPresetReady();
     const live = m.getPresetList().settings,
       saved = m.getCompletionPresetByName(ref.name);
     const fields = ref.kind === 'preset' ? ['prompts', 'prompt_order'] : [];
