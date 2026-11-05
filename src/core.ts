@@ -371,12 +371,14 @@ export function transferEntries(
     delete copy.unused;
     if (action === 'copy') {
       copy.id = uid();
-      const base = `${e.name}（副本）`;
-      let name = base;
-      let n = 2;
-      while (names.has(name)) name = `${base} ${n++}`;
-      copy.name = name;
-      names.add(name);
+      if (same) {
+        const base = `${e.name}（副本）`;
+        let name = base;
+        let n = 2;
+        while (names.has(name)) name = `${base} ${n++}`;
+        copy.name = name;
+        names.add(name);
+      }
       if (source.ref.kind === 'regex') copy.enabled = false;
     } else if (!same && idsInTarget.has(copy.id)) copy.id = uid();
     idsInTarget.add(copy.id);
@@ -395,8 +397,8 @@ export function transferEntries(
   const index = beforeId ? target.entries.findIndex(e => e.id === beforeId) + (after ? 1 : 0) : target.entries.length;
   target.entries.splice(index, 0, ...next);
   next.forEach((e, i) => {
-    const destination = targetGroupId || (same ? originalGroups[i] : undefined);
-    if (destination) assignGroup(target, [e.id], destination);
+    const destination = targetGroupId ?? (same ? originalGroups[i] : undefined);
+    if (destination !== undefined) assignGroup(target, [e.id], destination);
   });
   target.dirty = true;
   return next.map(e => e.id);

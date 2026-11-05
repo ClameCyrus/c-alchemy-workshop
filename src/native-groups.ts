@@ -26,6 +26,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     const view = views.get(key); if (!view) return;
     view.sections.forEach(s => s.header.remove());
     view.root.querySelectorAll('.prw-group-folded').forEach(row => row.classList.remove('prw-group-folded'));
+    view.root.querySelectorAll('.prw-group-member,.prw-group-end').forEach(row => row.classList.remove('prw-group-member', 'prw-group-end'));
     view.root.querySelectorAll<HTMLElement>('[data-prw-group-id]').forEach(row => delete row.dataset.prwGroupId);
     view.root.classList.remove('prw-native-grouped');
     view.bodies.restore();
@@ -73,9 +74,13 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     const starts = new Map<HTMLElement, Group>();
     view.rows.clear();
     let previous: HTMLElement | undefined, previousGroup = '';
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       const group = member.get(row.dataset.pmIdentifier || row.dataset.regexScriptId || row.id);
       if (row.dataset.prwGroupId !== (group?.id || '')) row.dataset.prwGroupId = group?.id || '';
+      const next = rows[index + 1];
+      row.classList.toggle('prw-group-member', !!group);
+      row.classList.toggle('prw-group-end', !!group && (!next || next.parentElement !== row.parentElement ||
+        member.get(next.dataset.pmIdentifier || next.dataset.regexScriptId || next.id)?.id !== group.id));
       if (group) {
         if (previousGroup !== group.id || previous?.parentElement !== row.parentElement) starts.set(row, group);
         const members = view.rows.get(group.id) || []; members.push(row); view.rows.set(group.id, members);

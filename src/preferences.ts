@@ -15,7 +15,7 @@ const Preferences = z.object({
   presetSwitch: z.boolean().default(false),
   presetRefresh: z.boolean().default(false),
   kind: z.enum(['preset', 'regex']).default('preset'),
-  operation: z.enum(['browse', 'drag', 'insert']).default('browse'),
+  operation: z.enum(['browse', 'drag', 'insert']).default('browse').transform(value => value === 'drag' ? 'insert' as const : value),
   transfer: z.enum(['copy', 'move']).default('copy'),
   page: z.enum(['left', 'right']).default('left'),
   views: z.object({ preset: View, regex: View }).prefault({}),

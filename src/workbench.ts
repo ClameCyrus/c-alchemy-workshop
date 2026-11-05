@@ -23,7 +23,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
   const resources = ref<Resource[]>([]);
   const selected = reactive<Record<string, string[]>>({});
   const anchor = ref<{ key: string; id: string } | null>(null);
-  const operation = ref<'browse' | 'drag' | 'insert'>(preferences.operation);
+  const operation = ref<'browse' | 'insert'>(preferences.operation);
   const transferAction = ref<'copy' | 'move'>(preferences.transfer);
   const activePage = ref<Side>(preferences.page);
   watch([operation, transferAction, activePage], () => {
