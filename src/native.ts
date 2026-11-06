@@ -1,7 +1,7 @@
 import { clearLegacyField, clone, globalGroups, legacyConflict, LEGACY_NS, makeDocument, NS, ownGroups, serialize, stable, transformTransfer } from './core';
 import type { Host, Kind, Raw, Resource, Snapshot, WorkDocument } from './types';
 import { assertPresetReady } from './native-preset-refresh';
-import { readLibrary, type MaterialLibrary } from './library';
+import { readLibrary, type EntryLibraryData } from './library';
 
 const ctx = () => {
   const c = window.SillyTavern?.getContext?.();
@@ -79,12 +79,12 @@ export class NativeHost implements Host {
   private libraryBusy = false;
   constructor(private moduleLoader: (path: string) => Promise<any> = nativeModule) {}
   async loadLibrary() { return readLibrary(ownGroups(ctx().extensionSettings, 'library')); }
-  async saveLibrary(value: MaterialLibrary, baseline: string) {
-    if (this.libraryBusy) throw new Error('素材库正在保存，请稍后重试');
+  async saveLibrary(value: EntryLibraryData, baseline: string) {
+    if (this.libraryBusy) throw new Error('条目库正在保存，请稍后重试');
     this.libraryBusy = true;
     try {
       const next = readLibrary(value), module = await this.moduleLoader('/script.js'), settings = ctx().extensionSettings;
-      if (stable(readLibrary(ownGroups(settings, 'library'))) !== baseline) throw new Error('素材库已在别处修改，请导出本次编辑后重新载入');
+      if (stable(readLibrary(ownGroups(settings, 'library'))) !== baseline) throw new Error('条目库已在别处修改，请导出本次编辑后重新载入');
       const before = clone(settings[NS]?.library), legacy = clone(settings[LEGACY_NS]?.library), namespace = settings[NS] ||= {};
       namespace.library = clone(next);
       clearLegacyField(settings, 'library');
@@ -94,7 +94,7 @@ export class NativeHost implements Host {
           if (before === undefined) delete namespace.library; else namespace.library = before;
           if (legacy !== undefined) { settings[LEGACY_NS] ||= {}; settings[LEGACY_NS].library = legacy; }
           try { await module.saveSettings(); }
-          catch { throw new Error(`素材库保存和恢复均失败，请保留本次编辑并导出备份。${String(error)}`); }
+          catch { throw new Error(`条目库保存和恢复均失败，请保留本次编辑并导出备份。${String(error)}`); }
         }
         throw error;
       }

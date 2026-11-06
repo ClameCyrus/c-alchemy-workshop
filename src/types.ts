@@ -74,8 +74,8 @@ export interface Host {
   refresh: (refs: Resource[]) => Promise<void>;
   edit?: (ref: Resource, id: string) => Promise<void | boolean>;
   setGroupEnabled?: (ref: Resource, id: string, enabled: boolean) => Promise<boolean>;
-  loadLibrary?: () => Promise<import('./library').MaterialLibrary>;
-  saveLibrary?: (value: import('./library').MaterialLibrary, baseline: string) => Promise<void>;
+  loadLibrary?: () => Promise<import('./library').EntryLibraryData>;
+  saveLibrary?: (value: import('./library').EntryLibraryData, baseline: string) => Promise<void>;
   worldbooks?: () => Promise<string[]>;
   loadWorldbook?: (name: string) => Promise<Raw>;
 }

@@ -25,8 +25,8 @@ import { browseRows } from './browse-rows';
 import { installEntryDrag } from './entry-drag';
 import { summarizeChanges, reviewSignature } from './change-summary';
 import { VERSION } from './version';
-import MaterialLibrary from './MaterialLibrary.vue';
-import { collectMaterial, type Material } from './library';
+import EntryLibrary from './EntryLibrary.vue';
+import { collectLibraryItem, type LibraryItem } from './library';
 import type { ChangeSummary } from './change-summary';
 import type { Entry, Host, Match, OpenRequest, Provider, Side, WorkDocument } from './types';
 
@@ -95,12 +95,12 @@ const confirmBox = ref<{
   resolve: (value: string | boolean | null) => void;
 } | null>(null);
 const menu = ref<{ key: string; id: string } | null>(null);
-const materialOpen = ref(false), materialCapture = ref<Material>(), materialTarget = ref(''), materialBody = ref(false);
-let materialCaret: { id: string; docKey: string; start: number; end: number; content: string } | undefined;
-const materialDocuments = computed(() => Object.values(state.documents));
-async function loadMaterialTarget(key: string) {
+const libraryOpen = ref(false), libraryCapture = ref<LibraryItem>(), libraryTarget = ref(''), libraryBody = ref(false);
+let libraryCaret: { id: string; docKey: string; start: number; end: number; content: string } | undefined;
+const libraryDocuments = computed(() => Object.values(state.documents));
+async function loadLibraryTarget(key: string) {
   const ref = [...props.host.resources('preset'), ...props.host.resources('regex')].find(r => r.key === key);
-  if (!ref) throw new Error('目标已不存在，请重新打开素材库');
+  if (!ref) throw new Error('目标已不存在，请重新打开条目库');
   const old = state.documents[key];
   if (old?.dirty) {
     if (old.ref.name !== ref.name || old.ref.avatar !== ref.avatar) throw new Error('目标已切换，请先处理旧草稿');
@@ -109,18 +109,18 @@ async function loadMaterialTarget(key: string) {
   const snapshot = await props.host.load(ref);
   if (!state.documents[key]?.dirty) state.documents[key] = makeDocument(ref, snapshot);
 }
-function openMaterials(doc?: WorkDocument, ids?: string[], body = false) {
+function openEntryLibrary(doc?: WorkDocument, ids?: string[], body = false) {
   try {
-    materialCapture.value = doc && ids ? collectMaterial(doc, ids) : undefined;
+    libraryCapture.value = doc && ids ? collectLibraryItem(doc, ids) : undefined;
     state.clearSelection(); explicitSources.value = []; transferSource.value = ''; finishDrag();
-    materialTarget.value = doc?.ref.key || docs.value[activePage.value]?.ref.key || keys.value.left;
-    materialBody.value = body;
+    libraryTarget.value = doc?.ref.key || docs.value[activePage.value]?.ref.key || keys.value.left;
+    libraryBody.value = body;
     if (body && edit.value) {
       const area = document.querySelector<HTMLTextAreaElement>('#prw-entry-content');
-      materialCaret = { id: edit.value.value.id, docKey: edit.value.docKey, content: edit.value.value.content,
+      libraryCaret = { id: edit.value.value.id, docKey: edit.value.docKey, content: edit.value.value.content,
         start: area?.selectionStart ?? edit.value.value.content.length, end: area?.selectionEnd ?? edit.value.value.content.length };
     }
-    menu.value = null; materialOpen.value = true;
+    menu.value = null; libraryOpen.value = true;
   } catch (e) { error.value = (e as Error).message; }
 }
 function collectEdit() {
@@ -129,27 +129,27 @@ function collectEdit() {
   const area = document.querySelector<HTMLTextAreaElement>('#prw-entry-content');
   if (area && area.selectionEnd > area.selectionStart) entry.content = entry.content.slice(area.selectionStart, area.selectionEnd);
   doc.entries = [entry]; doc.unused = [];
-  openMaterials(doc, [entry.id]);
+  openEntryLibrary(doc, [entry.id]);
 }
-async function applyMaterials(key: string, baseline: string, next: WorkDocument) {
+async function applyLibraryItems(key: string, baseline: string, next: WorkDocument) {
   if (!state.documents[key] || stable(state.documents[key]) !== baseline) { error.value = '目标草稿已变化，请重新预览'; return; }
   state.change(() => { state.documents[key] = clone(next); });
   if (!state.error) {
     state.clearSelection(); explicitSources.value = []; transferSource.value = ''; finishDrag();
-    materialOpen.value = false; clearComparison();
+    libraryOpen.value = false; clearComparison();
     if (kind.value !== next.ref.kind) await state.switchKind(next.ref.kind);
     resources.value = props.host.resources(kind.value);
     if (![keys.value.left, keys.value.right].includes(key)) await state.load(activePage.value, key);
     notice.value = '已加入草稿';
   }
 }
-function insertMaterialText(text: string) {
-  const caret = materialCaret;
+function insertLibraryText(text: string) {
+  const caret = libraryCaret;
   if (!edit.value || !caret || edit.value.value.id !== caret.id || edit.value.docKey !== caret.docKey || edit.value.value.content !== caret.content) {
-    error.value = '编辑目标已变化，请重新打开素材库'; return;
+    error.value = '编辑目标已变化，请重新打开条目库'; return;
   }
   edit.value.value.content = caret.content.slice(0, caret.start) + text + caret.content.slice(caret.end);
-  materialOpen.value = false;
+  libraryOpen.value = false;
 }
 const picked = ref<Record<Side, string>>({ left: '', right: '' });
 const readerOpen = ref(false), readerPage = ref<Side>('left');
@@ -346,7 +346,7 @@ async function open(request: OpenRequest = {}) {
         else clearComparison();
         if (request.action === 'edit') edit.value = { docKey: doc.ref.key, value: clone(entry) };
         if (request.action === 'group') rangeStart.value = { key: doc.ref.key, id: entry.id };
-        if (request.action === 'collect') openMaterials(doc, request.ids || [entry.id]);
+        if (request.action === 'collect') openEntryLibrary(doc, request.ids || [entry.id]);
         if (request.action === 'delete' || request.action === 'detach')
           await erase(doc, [entry.id], request.action === 'detach');
       }
@@ -375,7 +375,7 @@ async function open(request: OpenRequest = {}) {
 }
 defineExpose({ open });
 function close() {
-  if (edit.value || confirmBox.value || groupDialog.value || appearanceDialog.value || materialOpen.value) return;
+  if (edit.value || confirmBox.value || groupDialog.value || appearanceDialog.value || libraryOpen.value) return;
   opened.value = false;
   state.clearSelection(); explicitSources.value = []; transferSource.value = '';
   readerOpen.value = false;
@@ -431,7 +431,7 @@ function allSelect(side: Side) {
   transferSource.value = doc.ref.key;
 }
 async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
-  if (edit.value || materialOpen.value || groupDialog.value || appearanceDialog.value || confirmBox.value) return;
+  if (edit.value || libraryOpen.value || groupDialog.value || appearanceDialog.value || confirmBox.value) return;
   if (window.getSelection()?.type === 'Range' && window.getSelection()?.toString().trim()) return;
   if (rangeStart.value) {
     if (rangeStart.value.key !== doc.ref.key) {
@@ -522,7 +522,7 @@ const dragSource = ref<{ key: string; ids: string[] }[] | null>(null);
 const dropTarget = ref<{ key: string; id?: string; after: boolean; groupId?: string; header?: string } | null>(null);
 const entryDrag = installEntryDrag(() => panel.value, {
   start(row) {
-    if (operation.value !== 'insert' || rangeStart.value || readerOpen.value || edit.value || materialOpen.value || groupDialog.value || appearanceDialog.value || confirmBox.value) return;
+    if (operation.value !== 'insert' || rangeStart.value || readerOpen.value || edit.value || libraryOpen.value || groupDialog.value || appearanceDialog.value || confirmBox.value) return;
     const side = row.closest<HTMLElement>('[data-list]')?.dataset.list as Side;
     const doc = docs.value[side], entry = doc?.entries.find(e => e.id === row.dataset.entryId)
       || doc?.unused.find(e => e.id === row.dataset.entryId);
@@ -756,7 +756,7 @@ watch(notice, () => {
 });
 function keydown(e: KeyboardEvent) {
   if (e.key !== 'Escape') return;
-  if (materialOpen.value) return;
+  if (libraryOpen.value) return;
   if (readerOpen.value) { readerOpen.value = false; return; }
   if (dragSource.value) { finishDrag(); return; }
   if (confirmBox.value) finishConfirm(false);
@@ -812,7 +812,7 @@ onBeforeUnmount(() => {
           ><button :class="{ active: kind === 'regex' }" @click="state.switchKind('regex')">正则</button>
         </div>
         <button :class="{ active: dual }" @click="dual = !dual">对比</button>
-        <button @click="openMaterials()">素材库</button>
+        <button @click="openEntryLibrary()">条目库</button>
         <select v-model="operation" aria-label="操作模式">
           <option value="browse">浏览</option>
           <option value="insert">插入 / 拖动</option>
@@ -913,7 +913,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="list-toolbar">
               <button @click="allSelect(side)">全选</button
-              ><button v-if="selected[docs[side].ref.key]?.length" @click="openMaterials(docs[side], selected[docs[side].ref.key])">收藏</button
+              ><button v-if="selected[docs[side].ref.key]?.length" @click="openEntryLibrary(docs[side], selected[docs[side].ref.key])">收藏</button
               ><small
                 >{{ lists[side].length }} 条<span v-if="selected[docs[side].ref.key]?.length">
                   · 已选 {{ selected[docs[side].ref.key].length }}</span
@@ -1044,7 +1044,7 @@ onBeforeUnmount(() => {
                   ><button @click="insert(docs[side], entry.id, true)">后面</button>
                 </div>
                 <div v-if="menu?.key === docs[side].ref.key && menu.id === entry.id" class="row-menu" @click.stop>
-                  <button :disabled="protectedEntry(entry)" @click="openMaterials(docs[side], (selected[docs[side].ref.key] || []).includes(entry.id) ? selected[docs[side].ref.key] : [entry.id])">收藏到素材库</button>
+                  <button :disabled="protectedEntry(entry)" @click="openEntryLibrary(docs[side], (selected[docs[side].ref.key] || []).includes(entry.id) ? selected[docs[side].ref.key] : [entry.id])">收藏到条目库</button>
                   <button
                     @click="
                       edit = { docKey: docs[side].ref.key, value: clone(entry) };
@@ -1220,12 +1220,12 @@ onBeforeUnmount(() => {
               ></textarea></label
           ></template>
           <footer>
-            <template v-if="editDocument.ref.kind === 'preset' && !protectedEntry(edit.value)"><button type="button" @click="collectEdit">收藏选区／条目</button><button type="button" @click="openMaterials(editDocument, undefined, true)">插入素材</button></template>
+            <template v-if="editDocument.ref.kind === 'preset' && !protectedEntry(edit.value)"><button type="button" @click="collectEdit">收藏选区／条目</button><button type="button" @click="openEntryLibrary(editDocument, undefined, true)">插入条目</button></template>
             <button type="button" @click="edit = null">取消</button><button class="primary" type="submit">完成</button>
           </footer>
         </form>
       </div>
-      <MaterialLibrary v-if="materialOpen" :host="host" :capture="materialCapture" :documents="materialDocuments" :target="materialTarget" :load-target="loadMaterialTarget" :body-mode="materialBody" :grouping="state.preferences.grouping" :folds="state.preferences.library.folds" @close="materialOpen = false" @apply="applyMaterials" @text="insertMaterialText" />
+      <EntryLibrary v-if="libraryOpen" :host="host" :capture="libraryCapture" :documents="libraryDocuments" :target="libraryTarget" :load-target="loadLibraryTarget" :body-mode="libraryBody" :grouping="state.preferences.grouping" :folds="state.preferences.library.folds" @close="libraryOpen = false" @apply="applyLibraryItems" @text="insertLibraryText" />
       <div v-if="groupDocument" class="dialog-shade" @pointerdown.capture="backdropDown" @click.self="backdropClose($event, () => groupDialog = null)">
         <section class="group-dialog">
           <header><strong>分组方案</strong><button @click="groupDialog = null">✕</button></header>

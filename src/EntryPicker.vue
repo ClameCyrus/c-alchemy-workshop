@@ -25,7 +25,7 @@ async function place(id: string, after: boolean, groupId?: string) {
 </script>
 <template>
   <div class="entry-picker">
-    <div class="material-fields"><input v-model="query" type="search" placeholder="搜索条目名称或正文" aria-label="搜索目标条目" /><select v-if="grouping && doc.state.groups.length" v-model="group" aria-label="目标分组筛选"><option value="">全部分组</option><option value="__none">未分组</option><option v-for="g in doc.state.groups" :key="g.id" :value="g.id">{{ g.name }}</option></select></div>
+    <div class="library-fields"><input v-model="query" type="search" placeholder="搜索条目名称或正文" aria-label="搜索目标条目" /><select v-if="grouping && doc.state.groups.length" v-model="group" aria-label="目标分组筛选"><option value="">全部分组</option><option value="__none">未分组</option><option v-for="g in doc.state.groups" :key="g.id" :value="g.id">{{ g.name }}</option></select></div>
     <div ref="entriesRoot" class="picker-entries">
       <button v-if="mode === 'position'" class="picker-end" @click="place(doc.entries[0]?.id || '', false, '')">列表开头</button>
       <button v-if="allowNew" class="picker-end" :class="{active:selected==='__new'}" @click="emit('choose','__new')">新建初始化条目</button>
@@ -37,8 +37,8 @@ async function place(id: string, after: boolean, groupId?: string) {
         <article v-else class="picker-entry" :class="{active:selected===row.entry.id,grouped:grouping && !!groupOf(doc,row.entry.id)}" :data-picker-id="row.entry.id">
           <strong>{{ row.entry.name }} <small v-if="!row.entry.enabled">已关闭</small></strong>
           <p>{{ row.entry.content.slice(0,150) || '—' }}</p>
-          <div v-if="staged?.[row.entry.id]" class="material-fields"><small>本次插入</small><button :aria-label="`移除已插入素材 ${row.entry.name}`" @click="emit('remove',staged[row.entry.id])">移回素材</button></div>
-          <div class="material-fields" v-if="mode === 'position'"><button :aria-label="`在${row.entry.name}前面插入`" @click="place(row.entry.id,false)">前面</button><button :aria-label="`在${row.entry.name}后面插入`" @click="place(row.entry.id,true)">后面</button></div>
+          <div v-if="staged?.[row.entry.id]" class="library-fields"><small>本次插入</small><button :aria-label="`移除已插入条目 ${row.entry.name}`" @click="emit('remove',staged[row.entry.id])">移回条目</button></div>
+          <div class="library-fields" v-if="mode === 'position'"><button :aria-label="`在${row.entry.name}前面插入`" @click="place(row.entry.id,false)">前面</button><button :aria-label="`在${row.entry.name}后面插入`" @click="place(row.entry.id,true)">后面</button></div>
           <button v-else-if="!staged?.[row.entry.id]" :disabled="!!row.entry.raw.marker" :aria-label="`选择目标条目 ${row.entry.name}`" @click="emit('choose',row.entry.id)">选择此条目</button>
         </article>
       </template>

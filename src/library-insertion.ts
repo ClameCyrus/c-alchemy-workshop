@@ -1,10 +1,10 @@
 import { assignGroup, clone, entryFrom, protectedEntry, stable, uid } from './core';
-import { promptEntry, type Material } from './library';
+import { promptEntry, type LibraryItem } from './library';
 import { renameVariables, scanVariables, variableKey, variableMacro, type VariableScope } from './variables';
 import type { Entry, WorkDocument } from './types';
 
-export interface MaterialPart {
-  key: string; material: string; original: Entry; selected: boolean;
+export interface LibraryPart {
+  key: string; itemId: string; original: Entry; selected: boolean;
   mode: 'keep' | 'wrap' | 'reminder'; name: string; scope: VariableScope; reminder: string;
   position?: { id: string; after: boolean; groupId: string };
   insertedId?: string;
@@ -21,16 +21,16 @@ export interface InsertionOptions {
   bindings: VariableBinding[];
   requirePositions?: boolean;
 }
-export function materialParts(items: Material[]): MaterialPart[] {
-  return items.flatMap(item => item.entries.map(e => ({ key: `${item.id}/${e.id}`, material: item.id, original: clone(e),
+export function libraryParts(items: LibraryItem[]): LibraryPart[] {
+  return items.flatMap(item => item.entries.map(e => ({ key: `${item.id}/${e.id}`, itemId: item.id, original: clone(e),
     selected: true, mode: 'keep' as const, name: e.name, scope: 'local' as const, reminder: '', insertedId: uid(), prefix: '', suffix: '' })));
 }
-export function partContent(part: MaterialPart) {
+export function partContent(part: LibraryPart) {
   return `${part.prefix || ''}${variableContent(part)}${part.suffix || ''}`;
 }
-function variableContent(part: MaterialPart) {
+function variableContent(part: LibraryPart) {
   if (part.mode === 'keep') return part.original.content;
-  if (scanVariables(part.original.content).macros.length) throw new Error(`「${part.original.name}」已有变量，请保留原样或先编辑素材`);
+  if (scanVariables(part.original.content).macros.length) throw new Error(`「${part.original.name}」已有变量，请保留原样或先编辑条目`);
   if (part.mode === 'wrap') {
     const text = variableMacro(part.scope, part.name, part.original.content);
     if (scanVariables(text).macros.find(m => m.start === 0)?.end !== text.length || scanVariables(text).issues.length)
@@ -40,7 +40,7 @@ function variableContent(part: MaterialPart) {
   if (!part.reminder.trim()) throw new Error(`填写「${part.original.name}」的引用短句`);
   return `${variableMacro(part.scope, part.name, part.reminder)}\n${part.original.content}`;
 }
-export function insertionVariables(parts: MaterialPart[]) {
+export function insertionVariables(parts: LibraryPart[]) {
   const found = new Map<string, { scope: VariableScope; name: string; writes: number; reads: number }>();
   for (const part of parts.filter(p => p.selected)) {
     for (const m of scanVariables(partContent(part)).macros) {
@@ -52,17 +52,17 @@ export function insertionVariables(parts: MaterialPart[]) {
   }
   return [...found].map(([key, v]) => ({ key, ...v }));
 }
-export function insertMaterials(original: WorkDocument, items: Material[], parts: MaterialPart[], options: InsertionOptions) {
+export function insertLibraryItems(original: WorkDocument, items: LibraryItem[], parts: LibraryPart[], options: InsertionOptions) {
   const doc = clone(original), chosen = parts.filter(p => p.selected), warnings: string[] = [];
-  if (!chosen.length) throw new Error('先选择素材条目');
-  if (items.some(i => i.kind !== doc.ref.kind)) throw new Error('素材类型与目标不一致');
+  if (!chosen.length) throw new Error('先选择条目条目');
+  if (items.some(i => i.kind !== doc.ref.kind)) throw new Error('条目类型与目标不一致');
   if (doc.snapshot.legacyOwn && !doc.legacyResolved) throw new Error('新旧分组不同，请先选择分组方案');
   if (options.beforeId && !doc.entries.some(e => e.id === options.beforeId)) throw new Error('目标位置已不存在');
   if (options.groupId && !doc.state.groups.some(g => g.id === options.groupId)) throw new Error('目标分组已不存在');
   const existingIds = new Set([...original.entries, ...original.unused].map(e => e.id));
-  const inserted = new Map<string, MaterialPart>();
+  const inserted = new Map<string, LibraryPart>();
   for (const part of chosen) if (part.insertedId) {
-    if (existingIds.has(part.insertedId) || inserted.has(part.insertedId)) throw new Error('新增条目标识重复，请重新打开素材库');
+    if (existingIds.has(part.insertedId) || inserted.has(part.insertedId)) throw new Error('新增条目标识重复，请重新打开条目库');
     inserted.set(part.insertedId, part);
   }
   for (const part of chosen) {
@@ -87,7 +87,7 @@ export function insertMaterials(original: WorkDocument, items: Material[], parts
   const idMap = new Map<string, string>();
   const added = chosen.map(p => {
     const entry = clone(p.original);
-    if (protectedEntry(entry)) throw new Error('系统或占位条目不能作为素材插入');
+    if (protectedEntry(entry)) throw new Error('系统或占位条目不能作为条目插入');
     entry.id = p.insertedId || uid(); delete entry.unused; entry.enabled = options.enabled;
     if (doc.ref.kind === 'preset') {
       entry.content = renameVariables(partContent(p), names);
@@ -97,8 +97,8 @@ export function insertMaterials(original: WorkDocument, items: Material[], parts
     return entry;
   });
   const cursors = new Map<string, string>();
-  const ordered: MaterialPart[] = [], visiting = new Set<MaterialPart>(), visited = new Set<MaterialPart>();
-  function visit(part: MaterialPart) {
+  const ordered: LibraryPart[] = [], visiting = new Set<LibraryPart>(), visited = new Set<LibraryPart>();
+  function visit(part: LibraryPart) {
     if (visited.has(part)) return;
     if (visiting.has(part)) throw new Error('插入位置相互依赖，请重新选择');
     visiting.add(part);
