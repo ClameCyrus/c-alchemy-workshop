@@ -32,23 +32,47 @@
 #completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls{display:inline-flex!important;align-items:center!important}
 #completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>span{align-self:center!important}
 /* This icon is an inline native action, not a themed menu button. Reserve its slot. */
+@layer c-alchemy-workshop-protection {
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more{appearance:none!important;display:inline-flex!important;position:static!important;inset:auto!important;float:none!important;transform:none!important;translate:none!important;rotate:none!important;scale:none!important;flex:0 0 28px!important;width:28px!important;min-width:28px!important;max-width:28px!important;height:28px!important;min-height:28px!important;max-height:28px!important;box-sizing:border-box!important;align-items:center!important;justify-content:center!important;align-self:center!important;margin:0!important;padding:0!important;border:0!important;border-radius:4px!important;background:transparent!important;color:inherit!important;box-shadow:none!important;text-shadow:none!important;filter:none!important;line-height:1!important;font-size:14px!important;overflow:hidden!important;opacity:1!important;transition:none!important;animation:none!important}
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more:hover{background:color-mix(in srgb,var(--SmartThemeBodyColor,currentColor) 10%,transparent)!important}
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more:focus-visible{outline:1px solid var(--SmartThemeQuoteColor,currentColor)!important;outline-offset:-2px!important}
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more::before,:is(#completion_prompt_manager_list,#regex_container) button.prw-row-more::after{content:none!important;display:none!important}
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more svg{position:static!important;transform:none!important;display:block!important;flex:none!important;width:16px!important;height:16px!important;min-width:16px!important;max-width:16px!important;min-height:16px!important;max-height:16px!important;margin:0!important;padding:0!important;overflow:visible!important;filter:none!important}
+}
 #completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls{flex:0 0 auto!important;flex-wrap:nowrap!important;gap:4px!important;width:max-content!important;min-width:max-content!important;height:auto!important;max-height:none!important;white-space:nowrap!important}
 #completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>span{flex-shrink:0!important}
 #completion_prompt_manager_list .prw-enhanced-preset>span:has(>.prompt_manager_prompt_controls){flex:0 0 auto!important;width:max-content!important;min-width:max-content!important}
 #completion_prompt_manager_list .prw-enhanced-preset>.completion_prompt_manager_prompt_name{min-width:0!important;flex-shrink:1!important;overflow-wrap:anywhere}
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls{display:grid!important;grid-template-columns:16px 18px 24px 28px!important;gap:4px!important;align-items:center!important;justify-content:end!important;width:98px!important;min-width:98px!important;max-width:98px!important}
+#completion_prompt_manager_list .prw-enhanced-preset>span:has(>.prompt_manager_prompt_controls){flex:0 0 98px!important;width:98px!important;min-width:98px!important;max-width:98px!important}
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>.prompt-manager-edit-action{grid-column:2!important;grid-row:1!important;justify-self:center!important;margin:0!important}
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>.prompt-manager-toggle-action{grid-column:3!important;grid-row:1!important;justify-self:center!important;margin:0!important}
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>.prw-row-more{grid-column:4!important;grid-row:1!important;justify-self:center!important}
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>span:not(.prompt-manager-edit-action):not(.prompt-manager-toggle-action):not(.prompt-manager-detach-action){grid-column:1!important;grid-row:1!important;justify-self:center!important;margin:0!important}
+#completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>span[class="fa-solid"]{visibility:hidden!important}
+#completion_prompt_manager_list .prw-enhanced-preset>.completion_prompt_manager_prompt_name{flex:1 1 auto!important;width:auto!important}
+#completion_prompt_manager_list .prw-enhanced-preset>:is(.prompt_manager_prompt_tokens,.completion_prompt_manager_prompt_tokens){flex:0 0 45px!important;width:45px!important;min-width:45px!important;max-width:45px!important;text-align:right!important;font-variant-numeric:tabular-nums}
 .prw-native-grouped :is(.drag-handle,.menu-handle,.bai-bai-regex-script-drag-handle){touch-action:none;cursor:grab}
 .prw-native-moving{opacity:.55!important}
 .prw-native-drag-preview,.prw-native-drop-line{position:fixed!important;pointer-events:none!important;z-index:100250!important;box-sizing:border-box!important}
 .prw-native-drag-preview{max-width:min(300px,calc(100vw - 16px));padding:7px 12px;border:1px solid var(--SmartThemeBorderColor,var(--prw-border));border-radius:6px;background:var(--SmartThemeBlurTintColor,var(--prw-bg));color:var(--SmartThemeBodyColor,var(--prw-text));box-shadow:0 4px 16px var(--prw-shadow);font:13px/1.4 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .prw-native-drop-line{height:3px;background:var(--SmartThemeQuoteColor,var(--prw-accent))!important;box-shadow:0 0 0 1px var(--SmartThemeBlurTintColor,var(--prw-bg))}
 
-/* Tavern themes often style every select/button with !important. Confine this guard to our UI. */
+/* Layered important rules outrank unlayered themes, including multi-ID exclusions. */
+@layer c-alchemy-workshop-protection {
 #prw-mount :is(#prw-panel,.prw-text-reader) :is(button,select,input,textarea){box-sizing:border-box!important;box-shadow:none!important;text-shadow:none!important;letter-spacing:normal!important;font-family:inherit!important;color:var(--prw-control-text,var(--prw-text))!important;border-color:var(--prw-control-border,var(--prw-border))!important;border-radius:7px!important;background:var(--prw-control-bg,var(--prw-surface))!important}
+#prw-mount :is(#prw-panel,.prw-text-reader) button{padding:var(--prw-button-padding,6px 10px)!important;margin:0!important;border-width:var(--prw-button-border-width,1px)!important;border-style:var(--prw-button-border-style,solid)!important;font-size:inherit!important;line-height:1.25!important}
+}
+#prw-mount #prw-panel :is(.segmented,.entry-top,.list-toolbar) button{--prw-button-border-width:0px}
+#prw-mount #prw-panel .entry-top button{--prw-button-padding:2px 5px}
+#prw-mount #prw-panel :is(.list-toolbar,.group-chip) button{--prw-button-padding:4px 7px}
+#prw-mount #prw-panel .row-menu button{--prw-button-padding:5px 8px}
+#prw-mount #prw-panel .insert-actions button{--prw-button-padding:4px 14px;--prw-button-border-style:dashed}
+#prw-mount #prw-panel .detail-strip button{--prw-button-padding:3px 7px}
+#prw-mount #prw-panel :is(.material-library,.material-insert) button{--prw-button-padding:7px 10px}
+#prw-mount .prw-text-reader button{--prw-button-padding:5px 10px}
+@media(max-width:760px){#prw-mount #prw-panel .header-actions button{--prw-button-padding:6px 8px}}
+@media(max-width:420px){#prw-mount #prw-panel .header-actions button{--prw-button-padding:6px}#prw-mount #prw-panel .mobile-history button{--prw-button-padding:3px 6px}}
 #prw-mount :is(#prw-panel,.prw-text-reader) button{--prw-control-bg:var(--prw-surface);--prw-control-text:var(--prw-text);--prw-control-border:var(--prw-border);min-width:0!important;line-height:1.25!important}
 #prw-mount :is(#prw-panel,.prw-text-reader) button:hover{--prw-control-bg:var(--prw-hover)}
 #prw-mount :is(#prw-panel,.prw-text-reader) button:is(.active,.primary){--prw-control-bg:var(--prw-active);--prw-control-border:var(--prw-accent)}
@@ -77,7 +101,17 @@
 #prw-mount #prw-panel{width:100vw!important;height:100dvh!important;max-width:100vw!important;max-height:100dvh!important;margin:0!important;border:0!important;box-shadow:none!important;text-shadow:none!important}
 #prw-mount #prw-panel:not([open]){display:none!important}
 #prw-mount #prw-panel::backdrop{background:transparent}
+#prw-mount #prw-panel .material-shade{background:var(--prw-shade)!important}
+#prw-mount #prw-panel :is(.material-library,.material-insert){background:var(--prw-surface)!important;color:var(--prw-text)!important;border-color:var(--prw-border)!important;box-shadow:0 20px 70px var(--prw-shadow)!important}
+#prw-mount #prw-panel :is(.material-card,.material-confirm){background:var(--prw-bg)!important;color:var(--prw-text)!important;border-color:var(--prw-border)!important}
+#prw-mount #prw-panel .picker-entry{background:var(--prw-bg)!important;color:var(--prw-text)!important;border-color:var(--prw-border)!important}
+#prw-mount #prw-panel .picker-entry.active{background:var(--prw-active)!important;border-color:var(--prw-accent)!important}
+#prw-mount #prw-panel :is(.material-library,.material-insert) nav{position:static!important;transform:none!important;background:transparent!important;color:var(--prw-text)!important;border:0!important;box-shadow:none!important}
 #prw-mount #prw-panel *{text-shadow:none!important}
+#prw-mount #prw-panel :is(button,input,select,textarea){font-size:inherit!important;font-weight:400!important;filter:none!important;transform:none!important;animation:none!important;text-decoration:none!important}
+#prw-mount #prw-panel :is(button,input,select,textarea)::before,#prw-mount #prw-panel :is(button,input,select,textarea)::after{content:none!important;display:none!important}
+#prw-mount #prw-panel button:not(:disabled){opacity:1!important}
+#prw-mount #prw-panel :is(.prw-window,header,nav,main,section,article,div,p,label,small,strong,span):not(.prw-brand-name):not(.fa-solid):not(.fa-fw){font-family:inherit!important;filter:none!important;text-decoration:none!important}
 #prw-mount #prw-panel :is(.prw-toolbar,.mobile-pages,.prw-header,.prw-footer,.resource-bar,.search-bar,.list-toolbar),#prw-mount .prw-text-reader :is(header,nav){background:var(--prw-bg)!important;color:var(--prw-text)!important;border-color:var(--prw-border)!important;box-shadow:none!important;text-shadow:none!important}
 #prw-mount #prw-panel :is(.appearance-dialog,.edit-dialog,.group-dialog,.confirm-dialog)>header{background:transparent!important;color:var(--prw-text)!important;border-color:var(--prw-border)!important;box-shadow:none!important}
 #prw-mount #prw-panel .browse-group{display:flex;align-items:center;width:auto;margin:9px 3px 2px;padding:3px;border:0;border-bottom:1px solid var(--prw-border);background:var(--prw-inset);border-radius:6px!important;min-width:0}

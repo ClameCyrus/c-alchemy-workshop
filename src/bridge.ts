@@ -97,6 +97,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
       kind === 'regex' ? '.edit_existing_regex' : '.prompt-manager-edit-action,[data-preset-prompt-action="edit"]',
     );
     add('编辑', edit ? () => edit.click() : () => editResource(ref, id));
+    add('收藏到素材库', () => open({ kind, refKey: ref.key, entryId: id, ids, action: 'collect' }));
     add(total > 1 ? `复制 · ${total} 条` : '复制', () => quick.transfer(quickSources, 'copy', false, trigger));
     add(total > 1 ? `复制到… · ${total} 条` : '复制到…', () => quick.transfer(quickSources, 'copy', true, trigger));
     add(total > 1 ? `移动到… · ${total} 条` : '移动到…', () => quick.transfer(quickSources, 'move', true, trigger));

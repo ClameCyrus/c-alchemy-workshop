@@ -1,4 +1,4 @@
-import { NS, pausedMembers } from './core';
+import { globalGroups, ownGroups, pausedMembers } from './core';
 import type { GroupState, Raw } from './types';
 import { groupingEnabled } from './preferences';
 
@@ -63,7 +63,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
   const bindings = new Map<Raw, () => void>();
   let promptPatch: { manager: any; get: any; disabled: any; originalGet: any; originalDisabled: any } | undefined;
   const context = () => window.SillyTavern?.getContext?.();
-  const promptState = () => context()?.getPresetManager('openai')?.getPresetList().settings?.extensions?.[NS]?.promptGroups;
+  const promptState = () => ownGroups(context()?.getPresetManager('openai')?.getPresetList().settings?.extensions, 'promptGroups');
   let lastPromptState: any, promptBlocked = new Set<string>();
   function promptPlan() {
     const state = promptState();
@@ -77,9 +77,9 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
     const ch = c.characters?.[c.characterId];
     wanted = new Set();
     for (const [type, state] of [
-      [engine.SCRIPT_TYPES.GLOBAL, c.extensionSettings?.[NS]?.regexScopes?.global],
-      [engine.SCRIPT_TYPES.PRESET, live?.extensions?.[NS]?.regexGroups],
-      [engine.SCRIPT_TYPES.SCOPED, ch?.data?.extensions?.[NS]?.regexGroups],
+      [engine.SCRIPT_TYPES.GLOBAL, globalGroups(c.extensionSettings)],
+      [engine.SCRIPT_TYPES.PRESET, ownGroups(live?.extensions, 'regexGroups')],
+      [engine.SCRIPT_TYPES.SCOPED, ownGroups(ch?.data?.extensions, 'regexGroups')],
     ]) {
       if (!enabled || !nativeGrouping(state)) continue;
       const blocked = pausedMembers(state);

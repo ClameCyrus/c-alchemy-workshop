@@ -5,7 +5,7 @@ import { saveDocuments } from './native';
 import { readPreferences, writePreferences } from './preferences';
 import type { Host, Kind, Resource, Side, WorkDocument } from './types';
 
-export const useWorkbench = defineStore('preset-regex-workbench', () => {
+export const useWorkbench = defineStore('c-alchemy-workshop', () => {
   const preferences = reactive(readPreferences());
   watch(preferences, () => writePreferences(preferences), { deep: true, flush: 'sync' });
   watch(() => preferences.grouping, () => {
@@ -45,7 +45,11 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     host = value;
     resources.value = host.resources(kind.value);
   }
+  function clearSelection() {
+    for (const key of Object.keys(selected)) selected[key] = [];
+  }
   async function load(side: Side, key: string) {
+    if (keys[side] !== key) clearSelection();
     const ticket = ++requests[side], requestedKind = kind.value;
     anchor.value = null;
     keys[side] = key;
@@ -61,6 +65,9 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
         if (ticket !== requests[side] || requestedKind !== kind.value) return;
         if (!documents[key]?.dirty) documents[key] = makeDocument(resource, snapshot);
       }
+      const group = preferences.views[kind.value].groups[side];
+      if (group && group !== '__ungrouped' && !documents[key]?.state.groups.some(g => g.id === group))
+        preferences.views[kind.value].groups[side] = '';
       keys[side] = key;
       preferences.views[kind.value][side] = key;
       error.value = '';
@@ -71,6 +78,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
   }
   async function switchKind(value: Kind) {
     if (kind.value === value) return;
+    clearSelection();
     requests.left++; requests.right++;
     kind.value = value;
     preferences.kind = value;
@@ -172,9 +180,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
       saveOrder.value = [...new Set([...dependency, ...saveOrder.value])];
     });
     if (success && !error.value) {
-      sources.forEach(s => {
-        selected[s.key] = [];
-      });
+      clearSelection();
       notice.value = `${transferAction.value === 'copy' ? '已复制' : '已移动'} ${sources.reduce((n, s) => n + s.ids.length, 0)} 条`;
     }
   }
@@ -194,6 +200,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
       history.value = [];
       future.value = [];
       saveOrder.value = saveOrder.value.filter(key => !updated.some(d => d.ref.key === key));
+      clearSelection();
       error.value = '';
       notice.value = updated.some(d => d.ref.live) ? '已保存；使用中版本已应用' : '已保存';
       return true;
@@ -209,6 +216,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     history.value = [];
     future.value = [];
     saveOrder.value = [];
+    clearSelection();
     error.value = '';
     notice.value = '已放弃修改';
   }
@@ -219,6 +227,7 @@ export const useWorkbench = defineStore('preset-regex-workbench', () => {
     kind,
     resources,
     selected,
+    clearSelection,
     anchor,
     operation,
     transferAction,

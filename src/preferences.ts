@@ -19,6 +19,7 @@ const Preferences = z.object({
   transfer: z.enum(['copy', 'move']).default('copy'),
   page: z.enum(['left', 'right']).default('left'),
   views: z.object({ preset: View, regex: View }).prefault({}),
+  library: z.object({ folds: z.record(z.string(), z.boolean()).default({}) }).prefault({}),
   appearance: z.object({
     mode: z.enum(['theme', 'custom']).default('theme'),
     background: Color.default('#f0fbff'), text: Color.default('#24465c'),

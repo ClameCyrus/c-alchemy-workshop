@@ -4,7 +4,8 @@ import type { WorkDocument } from './types';
 export interface ChangeSummary { name: string; scope: string; lines: string[] }
 const provider = (key: string) => key === 'baibai' ? '柏宝箱' : '预设转移工具';
 export function summarizeChanges(doc: WorkDocument): ChangeSummary {
-  const before = makeDocument(doc.ref, doc.snapshot), lines: string[] = [];
+  const before = makeDocument(doc.ref, doc.ref.live && doc.snapshot.file ? doc.snapshot.file : doc.snapshot), lines: string[] = [];
+  if (doc.snapshot.namespace?.legacy !== undefined) lines.push('迁移工坊分组记录并保留备份');
   const old = new Map([...before.entries, ...before.unused].map(e => [e.id, e]));
   const next = new Map([...doc.entries, ...doc.unused].map(e => [e.id, e]));
   for (const [id, entry] of next) {

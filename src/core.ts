@@ -12,7 +12,18 @@ import type {
   WorkDocument,
 } from './types';
 
-export const NS = 'presetRegexWorkbench';
+export const NS = 'cAlchemyWorkshop';
+export const LEGACY_NS = 'presetRegexWorkbench';
+export const ownGroups = (container: Raw | undefined, key: string) => container?.[NS]?.[key] ?? container?.[LEGACY_NS]?.[key];
+export const globalGroups = (settings: Raw | undefined) => settings?.[NS]?.regexScopes?.global ?? settings?.[LEGACY_NS]?.regexScopes?.global;
+export function legacyConflict(current: any, legacy: any) {
+  return current !== undefined && legacy !== undefined && stable(current) !== stable(legacy) ? clone(legacy) : undefined;
+}
+export function clearLegacyField(container: Raw, key: string) {
+  if (!container[LEGACY_NS]) return;
+  delete container[LEGACY_NS][key];
+  if (!Object.keys(container[LEGACY_NS]).length) delete container[LEGACY_NS];
+}
 export const clone = <T>(value: T): T => (value === undefined ? value : JSON.parse(JSON.stringify(value)));
 export const uid = () =>
   globalThis.crypto?.randomUUID?.() || `prw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -34,7 +45,7 @@ const GroupSchema = z.object({
   collapsed: z.boolean().default(false),
   enabled: z.boolean().default(true),
   extra: z.record(z.string(), z.any()).optional(),
-});
+}).passthrough();
 const StateSchema = z.object({
   version: z.literal(1).default(1),
   native: z.boolean().optional(),
@@ -42,7 +53,7 @@ const StateSchema = z.object({
   sync: z.array(z.enum(['baibai', 'transfer'])).default([]),
   suppressed: z.array(z.enum(['baibai', 'transfer'])).default([]),
   backups: z.array(z.record(z.string(), z.any())).optional(),
-});
+}).passthrough();
 export function orderOf(raw: Raw): Raw[] {
   return raw.prompt_order?.find((o: Raw) => o.character_id === 100001)?.order || [];
 }
@@ -152,6 +163,11 @@ export function makeDocument(ref: Resource, snapshot: Snapshot): WorkDocument {
   state.groups = normalizeGroups(state.groups, ids);
   const sources: GroupSource[] = [];
   if (snapshot.own) sources.push({ provider: 'own', label: '工坊', groups: clone(state.groups), raw: snapshot.own });
+  if (snapshot.legacyOwn) {
+    const legacy = StateSchema.safeParse(snapshot.legacyOwn);
+    if (!legacy.success) throw new Error('旧版工坊分组格式无效，请先备份检查');
+    sources.push({ provider: 'legacy', label: '工坊 · 旧记录', groups: normalizeGroups(legacy.data.groups, ids), raw: clone(snapshot.legacyOwn) });
+  }
   for (const provider of ['baibai', 'transfer'] as const) {
     const groups = sourceGroups(provider, snapshot[provider], ids, ref.kind, ref.scope);
     const records = snapshot[provider];
@@ -271,10 +287,16 @@ export function transformTransfer(doc: WorkDocument, current: any, clear = false
   };
 }
 export function serialize(doc: WorkDocument): Snapshot {
+  if (doc.snapshot.legacyOwn && !doc.legacyResolved) throw new Error('新旧工坊分组不同，请先选择分组方案');
   const out = clone(doc.snapshot),
     ids = [...doc.entries, ...doc.unused].map(e => e.id);
   out.own = clone(doc.state);
   out.own.groups = normalizeGroups(out.own.groups, ids);
+  if (doc.snapshot.namespace?.legacy !== undefined || doc.snapshot.legacyOwn) {
+    out.own.backups = [...(out.own.backups || []), { provider: 'legacy', date: new Date().toISOString(),
+      data: clone(doc.snapshot.namespace?.legacy ?? doc.snapshot.legacyOwn), current: clone(doc.snapshot.namespace?.current ?? doc.snapshot.own) }];
+    delete out.legacyOwn;
+  }
   const deleted = new Set(doc.cleanup);
   if (doc.cleanup.length)
     out.own.backups = [
