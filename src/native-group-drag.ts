@@ -1,6 +1,7 @@
 import { installEntryDrag } from './entry-drag';
 import { holdNativeDrag, nativeDragBusy } from './native-drag';
 import { presetTransitionBusy } from './native-preset-refresh';
+import { nativeGroupDragAllowed } from './preset-lock';
 import type { Resource } from './types';
 
 const ROW = '[data-pm-identifier],.regex-script-label';
@@ -21,7 +22,7 @@ export function installNativeGroupDrag(resource: (row: HTMLElement) => Resource 
       if (!root || !id || saving || nativeDragBusy() || root.classList.contains('prw-preset-locked') ||
         (root.id === 'completion_prompt_manager_list' && (presetTransitionBusy() || (window as any).jQuery?.(root).data('ui-sortable')?.options.disabled))) return;
       const row = [...root.querySelectorAll<HTMLElement>(ROW)].find(r => r.dataset.prwGroupId === id);
-      const ref = row && resource(row); if (!ref) return;
+      const ref = row && resource(row); if (!ref || !nativeGroupDragAllowed(ref.kind)) return;
       try { guard(ref); } catch (error) { fail(error); return; }
       source = { root, id, ref }; release = holdNativeDrag();
       document.dispatchEvent(new Event('prw:native-drag-start'));
@@ -45,11 +46,18 @@ export function installNativeGroupDrag(resource: (row: HTMLElement) => Resource 
       if (line) line.style.cssText = `display:block;left:${bounds.left}px;width:${bounds.width}px;top:${after ? bounds.bottom : bounds.top}px`;
     },
     drop() {
-      if (!source || !target) return;
+      if (!source || !target || !nativeGroupDragAllowed(source.ref.kind)) return;
       const current = source, position = target; saving = true; line?.remove();
       void move(current.ref, current.id, position.id, position.after).then(() => finish(true), error => { finish(); fail(error); }).finally(() => { saving = false; });
     },
     end() { if (!saving) finish(); },
   }, { selector: '.prw-native-group-header', handle: '.prw-group-drag', scrollSelector: '.prw-native-grouped' });
-  return () => { drag.destroy(); finish(); };
+  const preference = () => { if (!saving && source && !nativeGroupDragAllowed(source.ref.kind)) drag.cancel(); };
+  document.addEventListener('prw:native-group-drag-preference', preference);
+  document.addEventListener('prw:grouping-preference', preference);
+  return () => {
+    document.removeEventListener('prw:native-group-drag-preference', preference);
+    document.removeEventListener('prw:grouping-preference', preference);
+    drag.destroy(); finish();
+  };
 }

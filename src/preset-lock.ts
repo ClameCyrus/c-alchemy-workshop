@@ -1,10 +1,13 @@
-import { readPreferences } from './preferences';
+import { groupingEnabled, readPreferences } from './preferences';
 import { nativeDragBusy } from './native-drag';
+import type { Kind } from './types';
 
 const KEY = 'c-alchemy-workshop:preset-lock:v1';
 const ROW = '.completion_prompt_manager_prompt[data-pm-identifier]';
 const INTERACTIVE = '.prompt_manager_prompt_controls,a,button,input,select,textarea,[contenteditable="true"],[data-preset-prompt-action],.prw-row-more,.prw-preset-lock';
 const DRAG = 'completion_prompt_manager_prompt_draggable';
+let groupDragUnlocked = false;
+export const nativeGroupDragAllowed = (kind: Kind) => groupingEnabled() && (kind === 'regex' || groupDragUnlocked);
 export function installPresetLock() {
   const abort = new AbortController(), signal = abort.signal;
   let enabled = readPreferences().presetLock;
@@ -13,6 +16,12 @@ export function installPresetLock() {
   const rows = new Map<HTMLElement, { draggable: string | null; custom: boolean }>();
   const sortables = new Map<HTMLElement, { instance: any; disabled: boolean }>();
   let button: HTMLButtonElement | undefined, queued = false, stopped = false;
+  function publishDragState() {
+    const allowed = enabled && !locked && !stopped;
+    if (groupDragUnlocked === allowed) return;
+    groupDragUnlocked = allowed;
+    document.dispatchEvent(new Event('prw:native-group-drag-preference'));
+  }
   function restore() {
     for (const [row, before] of rows) {
       if (before.custom) row.classList.add(DRAG);
@@ -28,6 +37,7 @@ export function installPresetLock() {
   }
   function scan() {
     queued = false; if (stopped) return;
+    publishDragState();
     if (!enabled) { button?.remove(); button = undefined; restore(); return; }
     if (nativeDragBusy()) return;
     const root = document.querySelector<HTMLElement>('#completion_prompt_manager_list');
@@ -81,5 +91,5 @@ export function installPresetLock() {
   document.addEventListener('prw:resources-saved', schedule, { signal });
   document.addEventListener('prw:native-drag-end', schedule, { signal });
   observe(); scan();
-  return () => { stopped = true; abort.abort(); observer.disconnect(); button?.remove(); restore(); };
+  return () => { stopped = true; publishDragState(); abort.abort(); observer.disconnect(); button?.remove(); restore(); };
 }

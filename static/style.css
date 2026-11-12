@@ -28,7 +28,9 @@
 #completion_prompt_manager_list.prw-native-grouped .completion_prompt_manager_prompt.prw-group-folded,
 #regex_container .prw-native-grouped .regex-script-label.prw-group-folded{display:none!important}
 .prw-group-drag{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:26px;min-height:28px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
-.prw-preset-locked .prw-group-drag{opacity:.35;cursor:default}
+.prw-native-group-header{column-gap:2px}
+.prw-native-group-header>.prw-group-drag{min-width:24px;width:24px;opacity:.65}
+.prw-native-group-header>.prw-group-drag+.prw-group-title{padding-left:0!important}
 body>.prw-entry-drag-preview{z-index:2147483646;background:var(--SmartThemeBlurTintColor,#222);color:var(--SmartThemeBodyColor,#eee);border-color:var(--SmartThemeBorderColor,#777)}
 /* Flatten only known third-party group shells, leaving row identity, listeners and native switches intact. */
 .prw-native-grouped :is(.bai-bai-regex-group,.bai-bai-regex-group-body,.bai-bai-regex-group-body-inner,.bai-bai-regex-group-list,.bai-bai-preset-group,.bai-bai-preset-group>.bai-bai-preset-group-body,.bai-bai-preset-group .bai-bai-preset-group-body-inner,.bai-bai-preset-group .bai-bai-preset-group-list){display:contents!important;pointer-events:auto!important;opacity:1!important}

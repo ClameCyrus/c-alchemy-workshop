@@ -5,11 +5,12 @@ import { retainNativeBodies } from './native-bodies';
 import { nativeDragBusy } from './native-drag';
 import { retainNativePresetGeometry } from './native-preset-geometry';
 import { presetTransitionBusy } from './native-preset-refresh';
+import { nativeGroupDragAllowed } from './preset-lock';
 import type { NativeModel } from './native-model';
 import type { Group, Host, Resource } from './types';
 
 interface Actions { enable(ref: Resource, id: string, enabled: boolean): Promise<void> }
-interface Section { header: HTMLElement; fold: HTMLButtonElement; power: HTMLButtonElement; group: Group }
+interface Section { header: HTMLElement; grip: HTMLElement; fold: HTMLButtonElement; power: HTMLButtonElement; group: Group }
 interface View {
   root: HTMLElement; model: NativeModel; rows: Map<string, HTMLElement[]>;
   sections: Map<HTMLElement, Section>; aria: Map<Element, string | null>; busy: Set<string>;
@@ -22,6 +23,15 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
   const cache = new Map<string, NativeModel | undefined>(), loading = new Set<string>(), views = new Map<string, View>();
   let epoch = 0, stopped = false, timer: ReturnType<typeof setTimeout> | undefined, queued = false;
   const pending = new Set<string>();
+  function syncDragHandles() {
+    for (const view of views.values()) {
+      const allowed = nativeGroupDragAllowed(view.model.ref.kind);
+      for (const { header, grip, fold } of view.sections.values()) {
+        if (allowed) { if (grip.parentElement !== header) header.insertBefore(grip, fold); }
+        else grip.remove();
+      }
+    }
+  }
   function remove(key: string) {
     const view = views.get(key); if (!view) return;
     view.sections.forEach(s => s.header.remove());
@@ -100,7 +110,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
         const grip = document.createElement('span'); grip.className = 'prw-group-drag'; grip.textContent = '⠿';
         grip.title = `按住拖动整组：${group.name}`; grip.setAttribute('aria-label', grip.title);
         fold.type = power.type = 'button'; fold.className = 'prw-group-title'; power.className = 'prw-group-power';
-        header.append(grip, fold, power);
+        header.append(fold, power);
         header.addEventListener('pointerdown', e => e.stopPropagation());
         header.addEventListener('mousedown', e => e.stopPropagation());
         fold.addEventListener('click', e => {
@@ -117,7 +127,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
           try { await actions.enable(view.model.ref, group.id, !current.enabled); }
           finally { view.busy.delete(group.id); paint(view, group.id); }
         });
-        section = { header, fold, power, group }; view.sections.set(row, section);
+        section = { header, grip, fold, power, group }; view.sections.set(row, section);
       }
       if (section.header.nextElementSibling !== row) row.before(section.header);
     }
@@ -128,6 +138,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
       el.setAttribute('aria-hidden', 'false');
     }
     for (const group of view.model.groups) paint(view, group.id);
+    syncDragHandles();
   }
   function scan() {
     if (stopped || nativeDragBusy()) return;
@@ -204,6 +215,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
   document.addEventListener('prw:resources-saved', saved);
   document.addEventListener('prw:group-state', groupState);
   document.addEventListener('prw:grouping-preference', preference);
+  document.addEventListener('prw:native-group-drag-preference', syncDragHandles);
   const dragEnd = (e: Event) => {
     if (pending.size) invalidate([]);
     else if ((e as CustomEvent).detail?.changed) invalidate();
@@ -217,6 +229,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
       document.removeEventListener('prw:resources-saved', saved); document.removeEventListener('prw:group-state', groupState);
       document.removeEventListener('prw:grouping-preference', preference); for (const key of views.keys()) remove(key);
       document.removeEventListener('prw:native-drag-end', dragEnd);
+      document.removeEventListener('prw:native-group-drag-preference', syncDragHandles);
     },
   };
 }
