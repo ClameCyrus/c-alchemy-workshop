@@ -40,7 +40,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
     for (const [selector, ref] of [
       ['#completion_prompt_manager_list', presets.find(r => r.live) || (host.demo ? presets[0] : undefined)],
       ['#saved_regex_scripts', regexes.find(r => r.scope === 'global')],
-      ['#saved_scoped_scripts', regexes.find(r => r.scope === 'scoped')],
+      ['#saved_scoped_scripts', regexes.find(r => r.scope === 'scoped' && (r.current || host.demo))],
       ['#saved_preset_scripts', regexes.find(r => r.scope === 'preset' && r.live) || (host.demo ? regexes.find(r => r.scope === 'preset') : undefined)],
     ] as const) {
       const root = document.querySelector<HTMLElement>(selector); if (root && ref) result.push({ root, ref });
@@ -97,8 +97,10 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
         const header = document.createElement(row.parentElement?.tagName === 'UL' ? 'li' : 'div');
         header.className = 'prw-native-group-header'; header.dataset.groupId = group.id;
         const fold = document.createElement('button'), power = document.createElement('button');
+        const grip = document.createElement('span'); grip.className = 'prw-group-drag'; grip.textContent = '⠿';
+        grip.title = `按住拖动整组：${group.name}`; grip.setAttribute('aria-label', grip.title);
         fold.type = power.type = 'button'; fold.className = 'prw-group-title'; power.className = 'prw-group-power';
-        header.append(fold, power);
+        header.append(grip, fold, power);
         header.addEventListener('pointerdown', e => e.stopPropagation());
         header.addEventListener('mousedown', e => e.stopPropagation());
         fold.addEventListener('click', e => {

@@ -1,5 +1,8 @@
 const ROW = ':scope > [data-pm-identifier]';
 const signatures = new WeakMap<Element, Map<string, string>>();
+const frames = new WeakMap<object, { list: HTMLElement; order: string[]; stamps: Map<string, string> }>();
+const validRow = (row: HTMLElement, prefix: string) => row.querySelector(`.${prefix}prompt_manager_prompt_name`) &&
+  row.querySelector('.prompt_manager_prompt_tokens') && row.querySelectorAll('.prompt_manager_prompt_controls > span').length >= 3;
 function changed(element: Element, key: string, value: string, previous: string) {
   let values = signatures.get(element);
   if (!values) { values = new Map(); signatures.set(element, values); }
@@ -34,7 +37,7 @@ function updateRow(row: HTMLElement, next: HTMLElement, prefix: string) {
 }
 
 /** Render with Tavern's own templates/handlers into a detached receiver, never into live DOM. */
-export async function prepareNativePreset(manager: any, tokensPending: boolean | 'failed') {
+export async function prepareNativePreset(manager: any, tokensPending: boolean | 'failed', incremental = true) {
   const stage = Object.create(manager);
   stage.containerElement = document.createElement('div');
   stage.listElement = null;
@@ -47,13 +50,34 @@ export async function prepareNativePreset(manager: any, tokensPending: boolean |
   const counts = tokensPending ? {} : { ...manager.tokenHandler.getCounts() };
   stage.tokenHandler = { getCounts: () => counts };
   if (tokensPending) { stage.error = null; stage.overriddenPrompts = []; }
+  // Native templates repeatedly find the same prompt/order entry. Index the snapshot once.
+  const prompts = new Map(stage.serviceSettings.prompts.filter(Boolean).map((p: any) => [p.identifier, p]));
+  const order = stage.getPromptOrderForCharacter(stage.activeCharacter) || [];
+  const orders = new Map(order.map((entry: any) => [entry.identifier, entry]));
+  stage.getPromptById = (id: string) => prompts.get(id);
+  stage.getPromptOrderEntry = (_character: any, id: string) => orders.get(id);
+  const ordered = stage.getPromptsForCharacter(stage.activeCharacter).filter(Boolean);
+  const ids: string[] = ordered.map((p: any) => p.identifier);
+  const stamps = new Map<string, string>(ordered.map((p: any) => [p.identifier, JSON.stringify([
+    { ...p, content: undefined }, orders.get(p.identifier), counts[p.identifier],
+    stage.overriddenPrompts?.includes(p.identifier), stage.activeCharacter,
+    p.identifier === 'chatHistory' ? [stage.tokenUsage, stage.serviceSettings.openai_max_context,
+      stage.serviceSettings.openai_max_tokens, stage.configuration.warningTokenThreshold, stage.configuration.dangerTokenThreshold] : null,
+  ])]));
+  const before = frames.get(manager), liveRows = manager.listElement ? [...manager.listElement.querySelectorAll(ROW)] as HTMLElement[] : [];
+  const partial = incremental && !!before && before.list === manager.listElement && ids.length === before.order.length &&
+    ids.every((id, i) => id === before.order[i] && liveRows[i]?.dataset.pmIdentifier === id) &&
+    liveRows.length === ids.length && liveRows.every(row => validRow(row, manager.configuration.prefix)) &&
+    !manager.containerElement.querySelector(`.${manager.configuration.prefix}prompt_manager_error`) && !stage.error;
+  stage.getPromptsForCharacter = () => partial ? ordered.filter((p: any) => before!.stamps.get(p.identifier) !== stamps.get(p.identifier)) : ordered;
+  stage.prwFrame = { order: ids, stamps, partial };
   await manager.renderPromptManager.call(stage);
   await manager.renderPromptManagerListItems.call(stage);
   if (!(stage.listElement instanceof HTMLElement) || !stage.containerElement.contains(stage.listElement))
     throw new Error('原生提示词模板不支持离线刷新');
   const rows = [...stage.listElement.querySelectorAll(ROW)] as HTMLElement[];
-  const ids = rows.map(r => r.dataset.pmIdentifier);
-  if (ids.some(id => !id) || new Set(ids).size !== ids.length) throw new Error('原生条目ID重复或缺失');
+  if (ids.some(id => !id) || new Set(ids).size !== ids.length || rows.length !== stage.getPromptsForCharacter().length)
+    throw new Error('原生条目ID重复或缺失');
   return stage;
 }
 
@@ -64,9 +88,7 @@ export function publishNativePreset(manager: any, stage: any, retain: boolean) {
   const list = container.querySelector<HTMLElement>(`#${CSS.escape(freshList.id)}`);
   const rows = list ? [...list.querySelectorAll<HTMLElement>(ROW)] : [];
   const freshRows = [...freshList.querySelectorAll<HTMLElement>(ROW)];
-  const valid = (r: HTMLElement) => r.querySelector(`.${prefix}prompt_manager_prompt_name`) &&
-    r.querySelector('.prompt_manager_prompt_tokens') &&
-    r.querySelectorAll('.prompt_manager_prompt_controls > span').length >= 3;
+  const valid = (r: HTMLElement) => validRow(r, prefix);
   const oldHeader = container.querySelector(`.${prefix}prompt_manager_header`);
   const freshHeader = stage.containerElement.querySelector(`.${prefix}prompt_manager_header`);
   const oldSelect = container.querySelector('select'), freshSelect = stage.containerElement.querySelector('select');
@@ -76,18 +98,20 @@ export function publishNativePreset(manager: any, stage: any, retain: boolean) {
     new Set(rows.map(r => r.dataset.pmIdentifier)).size === rows.length && rows.every(valid) && freshRows.every(valid) &&
     !container.querySelector(`.${prefix}prompt_manager_error`) && !stage.error;
   if (!reusable) {
+    if (stage.prwFrame?.partial) throw new Error('原生列表结构已改变，无法局部刷新');
     container.replaceChildren(...stage.containerElement.childNodes);
     manager.listElement = freshList;
     manager.makeDraggable();
   } else {
     const byId = new Map(rows.map(r => [r.dataset.pmIdentifier!, r]));
-    const desired = new Set(freshRows.map(r => r.dataset.pmIdentifier!));
+    const desired = new Set<string>(stage.prwFrame?.order || freshRows.map(r => r.dataset.pmIdentifier!));
     let structural = false;
     for (const row of rows) if (!desired.has(row.dataset.pmIdentifier!)) { row.remove(); structural = true; }
+    const freshById = new Map(freshRows.map(r => [r.dataset.pmIdentifier!, r]));
     let previous: HTMLElement | undefined;
-    for (const fresh of freshRows) {
-      const row = byId.get(fresh.dataset.pmIdentifier!) || fresh;
-      if (row !== fresh) updateRow(row, fresh, prefix);
+    for (const id of desired) {
+      const fresh = freshById.get(id), row = byId.get(id) || fresh!;
+      if (fresh && row !== fresh) updateRow(row, fresh, prefix);
       const currentRows = previous
         ? (() => { let e = previous!.nextElementSibling; while (e && !e.hasAttribute('data-pm-identifier')) e = e.nextElementSibling; return e; })()
         : list.querySelector(ROW);
@@ -108,4 +132,5 @@ export function publishNativePreset(manager: any, stage: any, retain: boolean) {
   }
   const select = container.querySelector('select');
   if (select && [...select.options].some(o => o.value === selected)) select.value = selected!;
+  if (stage.prwFrame) frames.set(manager, { ...stage.prwFrame, list: manager.listElement });
 }

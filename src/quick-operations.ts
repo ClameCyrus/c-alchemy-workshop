@@ -1,5 +1,6 @@
 import { assignGroup, clone, makeDocument, normalizeGroups, rangeMembers, removeEntries, transferEntries, uid } from './core';
 import { saveDocuments } from './native';
+import { reorderGroup } from './group-order';
 import type { GroupSource, Host, Provider, Resource, WorkDocument } from './types';
 
 export interface QuickSource { ref: Resource; ids: string[] }
@@ -134,6 +135,12 @@ export class QuickOperations {
     // Native Sortable already saved the order. Only change membership, preserving every native flag.
     assignGroup(doc, [id], groupId || undefined);
     this.guard(ref); await saveDocuments(this.host, [doc], [], { preserveRaw: true }); this.changed([ref]);
+  }
+  async reorderGroup(ref: Resource, groupId: string, targetId?: string, after = false) {
+    this.guard(ref);
+    const doc = await this.load(ref);
+    if (!reorderGroup(doc, groupId, targetId, after)) return;
+    this.guard(ref); await saveDocuments(this.host, [doc], [], { orderOnly: true }); this.changed([ref]);
   }
   async erase(ref: Resource, ids: string[], detach = false) {
     const doc = await this.load(ref);

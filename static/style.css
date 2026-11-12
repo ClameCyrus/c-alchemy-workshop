@@ -24,6 +24,12 @@
 .prw-native-grouped .prw-group-end{border-bottom:2px solid color-mix(in srgb,var(--SmartThemeBodyColor,currentColor) 45%,transparent)!important;margin-bottom:8px!important}
 .prw-entry-drag-preview{position:fixed!important;z-index:50;pointer-events:none;max-width:min(300px,calc(100vw - 16px));box-sizing:border-box;padding:7px 12px;border:1px solid var(--prw-accent);border-radius:6px;background:var(--prw-bg);color:var(--prw-text);box-shadow:0 4px 16px var(--prw-shadow);font:13px/1.4 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .prw-native-group-header .prw-group-title{flex:1;text-align:left;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:600!important}.prw-native-group-header .prw-group-power{flex:none;font-size:12px!important;white-space:nowrap}.prw-native-group-header.prw-group-paused .prw-group-title{opacity:.6}.prw-group-folded{display:none!important}
+/* The theme forces native rows to flex!important, including closed groups. */
+#completion_prompt_manager_list.prw-native-grouped .completion_prompt_manager_prompt.prw-group-folded,
+#regex_container .prw-native-grouped .regex-script-label.prw-group-folded{display:none!important}
+.prw-group-drag{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:26px;min-height:28px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.prw-preset-locked .prw-group-drag{opacity:.35;cursor:default}
+body>.prw-entry-drag-preview{z-index:2147483646;background:var(--SmartThemeBlurTintColor,#222);color:var(--SmartThemeBodyColor,#eee);border-color:var(--SmartThemeBorderColor,#777)}
 /* Flatten only known third-party group shells, leaving row identity, listeners and native switches intact. */
 .prw-native-grouped :is(.bai-bai-regex-group,.bai-bai-regex-group-body,.bai-bai-regex-group-body-inner,.bai-bai-regex-group-list,.bai-bai-preset-group,.bai-bai-preset-group>.bai-bai-preset-group-body,.bai-bai-preset-group .bai-bai-preset-group-body-inner,.bai-bai-preset-group .bai-bai-preset-group-list){display:contents!important;pointer-events:auto!important;opacity:1!important}
 .prw-native-grouped :is(.bai-bai-regex-group-header,.bai-bai-regex-list-toolbar,.bai-bai-preset-group>.bai-bai-preset-group-header){display:none!important}

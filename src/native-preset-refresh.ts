@@ -77,7 +77,7 @@ export function installNativePresetRefresh(load: Loader = p => import(/* webpack
     painting = true; requested = false;
     const revision = epoch, name = selected(), prompts = manager.serviceSettings.prompts;
     try {
-      const stage = await prepareNativePreset(manager, tokensFailed ? 'failed' : tokensPending);
+      const stage = await prepareNativePreset(manager, tokensFailed ? 'failed' : tokensPending, options.presetRefresh);
       if (stopped || !active() || revision !== epoch || name !== selected() || prompts !== manager.serviceSettings.prompts) return;
       if (nativeDragBusy()) { requested = true; return; }
       // Switching also uses the staged native tree; ordinary optimized edits retain the existing rows.

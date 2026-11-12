@@ -61,7 +61,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
   let stopped = false, scheduled = false, engine: any, openai: any;
   let wanted = new Set<Raw>();
   const bindings = new Map<Raw, () => void>();
-  let promptPatch: { manager: any; get: any; disabled: any; originalGet: any; originalDisabled: any } | undefined;
+  let promptPatch: { manager: any; get: any; disabled: any; prepare: any; originalGet: any; originalDisabled: any; originalPrepare: any } | undefined;
   const context = () => window.SillyTavern?.getContext?.();
   const promptState = () => ownGroups(context()?.getPresetManager('openai')?.getPresetList().settings?.extensions, 'promptGroups');
   let lastPromptState: any, promptBlocked = new Set<string>();
@@ -93,9 +93,20 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
     lastPromptState = promptState(); promptBlocked = pausedMembers(lastPromptState);
     const pm = openai?.promptManager;
     if (typeof pm?.getPromptCollection !== 'function' || typeof pm.isPromptDisabledForActiveCharacter !== 'function' ||
-        (promptPatch && promptPatch.manager === pm && pm.getPromptCollection === promptPatch.get && pm.isPromptDisabledForActiveCharacter === promptPatch.disabled)) return;
+        (promptPatch && promptPatch.manager === pm && pm.getPromptCollection === promptPatch.get && pm.isPromptDisabledForActiveCharacter === promptPatch.disabled && pm.preparePrompt === promptPatch.prepare)) return;
     const originalGet = promptPatch && promptPatch.manager === pm && pm.getPromptCollection === promptPatch.get ? promptPatch.originalGet : pm.getPromptCollection;
     const originalDisabled = promptPatch && promptPatch.manager === pm && pm.isPromptDisabledForActiveCharacter === promptPatch.disabled ? promptPatch.originalDisabled : pm.isPromptDisabledForActiveCharacter;
+    const originalPrepare = promptPatch && promptPatch.manager === pm && pm.preparePrompt === promptPatch.prepare ? promptPatch.originalPrepare : pm.preparePrompt;
+    const prepare = function (this: any, prompt: Raw, ...args: any[]) {
+      const plan = promptPlan();
+      // substituteParams executes setvar before the collection is filtered.
+      // Sanitize a disposable input, leaving stored content and switches intact.
+      if (!stopped && plan.active && plan.blocked.has(prompt?.identifier)) {
+        prompt = { ...prompt, content: '' };
+        if (typeof args[0] === 'string') args[0] = '';
+      }
+      return originalPrepare.call(this, prompt, ...args);
+    };
     const get = function (this: any, ...args: any[]) {
       const plan = promptPlan();
       if (stopped || !plan.active) return originalGet.apply(this, args);
@@ -109,7 +120,8 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
       return base.call(this, id, ...args) || (!stopped && plan.active && plan.blocked.has(id));
     };
     pm.getPromptCollection = get; pm.isPromptDisabledForActiveCharacter = disabled;
-    promptPatch = { manager: pm, get, disabled, originalGet, originalDisabled };
+    if (typeof originalPrepare === 'function') pm.preparePrompt = prepare;
+    promptPatch = { manager: pm, get, disabled, prepare: pm.preparePrompt, originalGet, originalDisabled, originalPrepare };
   }
   function schedule() { if (!scheduled && !stopped) { scheduled = true; queueMicrotask(() => { scheduled = false; try { sync(); } catch (error) { console.error('[Cの炼金工坊] 分组执行同步失败', error); } }); } }
   const c = context(), events = [...new Set(['CHAT_CHANGED', 'OAI_PRESET_CHANGED_AFTER', 'PRESET_CHANGED', 'MAIN_API_CHANGED', 'SETTINGS_UPDATED', 'CHARACTER_EDITED'].map(k => c?.eventTypes?.[k]).filter(Boolean))];
@@ -128,6 +140,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
     const p = promptPatch;
     if (p && p.manager.getPromptCollection === p.get) p.manager.getPromptCollection = p.originalGet;
     if (p && p.manager.isPromptDisabledForActiveCharacter === p.disabled) p.manager.isPromptDisabledForActiveCharacter = p.originalDisabled;
+    if (p && p.manager.preparePrompt === p.prepare && p.originalPrepare) p.manager.preparePrompt = p.originalPrepare;
     for (const event of events) c.eventSource.removeListener(event, schedule);
     document.removeEventListener('prw:resources-saved', schedule);
     document.removeEventListener('prw:runtime-sync', schedule);

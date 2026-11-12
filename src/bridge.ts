@@ -6,6 +6,7 @@ import { groupingEnabled } from './preferences';
 import { QuickOperations } from './quick-operations';
 import { installNativeRegexDrag, nativeDragBusy } from './native-drag';
 import { installNativePresetDrag } from './native-preset-drag';
+import { installNativeGroupDrag } from './native-group-drag';
 import { nativeSurface } from './native-surface';
 import { presetTransitionBusy } from './native-preset-refresh';
 
@@ -31,7 +32,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
       row.dataset.regexType ||
       (row.closest('#saved_regex_scripts') ? 'global' : row.closest('#saved_scoped_scripts') ? 'scoped' : 'preset');
     if (type === 'global') return resources.find(r => r.scope === 'global');
-    if (type === 'scoped' || type === 'character') return resources.find(r => r.scope === 'scoped');
+    if (type === 'scoped' || type === 'character') return resources.find(r => r.scope === 'scoped' && (r.current || host.demo));
     const name = window.SillyTavern?.getContext().getPresetManager('openai')?.getSelectedPresetName();
     return resources.find(r => r.scope === 'preset' && (r.name === name || host.demo));
   };
@@ -204,6 +205,8 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     (ref, id, target) => operations.reorderRegex(ref, id, target.id, target.after, target.groupId), quick.fail);
   const stopPresetDrag = installNativePresetDrag(row => currentRef(row, 'preset'), guard,
     (ref, id, groupId, order) => operations.nativePresetGroup(ref, id, groupId, order), quick.fail);
+  const stopGroupDrag = installNativeGroupDrag(row => currentRef(row, row.hasAttribute('data-pm-identifier') ? 'preset' : 'regex'), guard,
+    (ref, id, target, after) => operations.reorderGroup(ref, id, target, after), quick.fail);
   document.addEventListener('prw:native-drag-start', close, { signal });
   document.addEventListener('prw:native-drag-end', scan, { signal });
   scan();
@@ -242,6 +245,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     close();
     stopDrag();
     stopPresetDrag();
+    stopGroupDrag();
     groups?.destroy();
     quick.destroy();
     abort.abort();

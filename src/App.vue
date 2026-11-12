@@ -23,6 +23,7 @@ import { useComparison } from './comparison';
 import TextCompare from './TextCompare.vue';
 import { browseRows } from './browse-rows';
 import { installEntryDrag } from './entry-drag';
+import { reorderGroup } from './group-order';
 import { summarizeChanges, reviewSignature } from './change-summary';
 import { VERSION } from './version';
 import EntryLibrary from './EntryLibrary.vue';
@@ -519,12 +520,21 @@ function insert(doc: WorkDocument, id?: string, after = false, groupId?: string)
     doc.ref.key, position.id, position.after, position.groupId);
 }
 const dragSource = ref<{ key: string; ids: string[] }[] | null>(null);
+const draggedGroup = ref<{ key: string; id: string } | null>(null);
 const dropTarget = ref<{ key: string; id?: string; after: boolean; groupId?: string; header?: string } | null>(null);
 const entryDrag = installEntryDrag(() => panel.value, {
   start(row) {
     if (operation.value !== 'insert' || rangeStart.value || readerOpen.value || edit.value || libraryOpen.value || groupDialog.value || appearanceDialog.value || confirmBox.value) return;
     const side = row.closest<HTMLElement>('[data-list]')?.dataset.list as Side;
-    const doc = docs.value[side], entry = doc?.entries.find(e => e.id === row.dataset.entryId)
+    const doc = docs.value[side];
+    if (row.classList.contains('browse-group')) {
+      const group = doc?.state.groups.find(g => g.id === row.dataset.groupId);
+      if (!doc || !group) return;
+      draggedGroup.value = { key: doc.ref.key, id: group.id };
+      dragSource.value = [{ key: doc.ref.key, ids: doc.entries.filter(e => group.members.includes(e.id)).map(e => e.id) }];
+      return `${group.name} · ${dragSource.value[0].ids.length} 条`;
+    }
+    const entry = doc?.entries.find(e => e.id === row.dataset.entryId)
       || doc?.unused.find(e => e.id === row.dataset.entryId);
     if (!doc || !entry || protectedEntry(entry)) return;
     dragSource.value = [{ key: doc.ref.key, ids: (selected.value[doc.ref.key] || []).includes(entry.id)
@@ -538,12 +548,17 @@ const entryDrag = installEntryDrag(() => panel.value, {
     const doc = docs.value[side];
     dropTarget.value = null;
     if (!doc || !list || !dragSource.value) return;
+    if (draggedGroup.value && draggedGroup.value.key !== doc.ref.key) return;
     const row = element?.closest<HTMLElement>('.entry,.browse-group');
     if (row?.classList.contains('entry')) {
       const bounds = row.getBoundingClientRect();
       dropTarget.value = insertionPosition(doc, row.dataset.entryId, y >= bounds.top + bounds.height / 2);
     } else if (row?.dataset.groupId) {
-      dropTarget.value = { ...insertionPosition(doc, undefined, false, row.dataset.groupId), header: row.dataset.groupId };
+      const members = doc.entries.filter(e => groupOf(doc, e.id)?.id === row.dataset.groupId), bounds = row.getBoundingClientRect();
+      const after = y >= bounds.top + bounds.height / 2;
+      dropTarget.value = draggedGroup.value
+        ? { key: doc.ref.key, id: (after ? members.at(-1) : members[0])?.id, after, header: row.dataset.groupId }
+        : { ...insertionPosition(doc, undefined, false, row.dataset.groupId), header: row.dataset.groupId };
     } else if (!comparingSelection.value && !searchQuery.value[side].trim() && !groupFilter.value[side] && filter.value === 'all') {
       dropTarget.value = insertionPosition(doc);
     }
@@ -551,10 +566,15 @@ const entryDrag = installEntryDrag(() => panel.value, {
   drop() {
     const position = dropTarget.value;
     if (!position || !dragSource.value) return;
+    if (draggedGroup.value) {
+      const group = draggedGroup.value, doc = state.documents[group.key];
+      if (doc && position.key === group.key) state.change(() => reorderGroup(doc, group.id, position.id, position.after));
+      return;
+    }
     state.transferMany(dragSource.value, position.key, position.id, position.after, position.groupId);
   },
-  end() { dragSource.value = null; dropTarget.value = null; },
-});
+  end() { dragSource.value = null; draggedGroup.value = null; dropTarget.value = null; },
+}, { selector: '.entry.can-drag,.browse-group.can-drag' });
 function finishDrag() { entryDrag.cancel(); }
 function saveEdit() {
   if (!edit.value) return;
@@ -939,8 +959,9 @@ onBeforeUnmount(() => {
                   :key="g.id"
                   class="group-chip browse-group"
                   :data-group-id="g.id"
-                  :class="{'drop-group':dropTarget?.key === docs[side].ref.key && dropTarget.header === g.id}"
+                  :class="{'drop-group':dropTarget?.key === docs[side].ref.key && dropTarget.header === g.id,'can-drag':operation === 'insert'}"
                 >
+                  <span v-if="operation === 'insert'" class="prw-group-drag" :title="`按住拖动整组：${g.name}`">⠿</span>
                   <button
                     :aria-label="`${row.collapsed ? '展开' : '折叠'} ${g.name}`"
                     :aria-expanded="!row.collapsed"

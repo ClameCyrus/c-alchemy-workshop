@@ -6,7 +6,8 @@ interface DragCallbacks {
 }
 
 // Delay activation so a click compares, while a quick touch swipe still scrolls.
-export function installEntryDrag(root: () => HTMLElement | undefined, callbacks: DragCallbacks) {
+export function installEntryDrag(root: () => HTMLElement | undefined, callbacks: DragCallbacks,
+  options: { selector?: string; handle?: string; scrollSelector?: string } = {}) {
   const abort = new AbortController(), signal = abort.signal;
   let press: { row: HTMLElement; pointer: number; x: number; y: number } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined, frame = 0, active = false;
@@ -28,7 +29,11 @@ export function installEntryDrag(root: () => HTMLElement | undefined, callbacks:
     frame = 0;
     if (!active) return;
     if (!press?.row.isConnected) { cancel(); return; }
-    const element = hit(), list = element?.closest<HTMLElement>('.entry-list');
+    const element = hit();
+    let list = element?.closest<HTMLElement>(options.scrollSelector || '.entry-list');
+    if (options.scrollSelector && list) {
+      while (list && !(list.scrollHeight > list.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(list).overflowY))) list = list.parentElement;
+    }
     callbacks.over(element, y);
     if (preview) {
       preview.style.left = `${Math.max(4, Math.min(x + 14, innerWidth - preview.offsetWidth - 4))}px`;
@@ -45,8 +50,8 @@ export function installEntryDrag(root: () => HTMLElement | undefined, callbacks:
   document.addEventListener('pointerdown', e => {
     if (e.button !== 0 || !e.isPrimary) return;
     suppressUntil = 0;
-    const el = e.target as HTMLElement, row = el.closest<HTMLElement>('.entry.can-drag');
-    if (!row || !root()?.contains(row) || el.closest('button,input,label,select,textarea,summary,details,a')) return;
+    const el = e.target as HTMLElement, row = el.closest<HTMLElement>(options.selector || '.entry.can-drag');
+    if (!row || !root()?.contains(row) || (options.handle ? !el.closest(options.handle) : !!el.closest('button,input,label,select,textarea,summary,details,a'))) return;
     cancel();
     press = { row, pointer: e.pointerId, x: e.clientX, y: e.clientY }; x = e.clientX; y = e.clientY;
     timer = setTimeout(() => {

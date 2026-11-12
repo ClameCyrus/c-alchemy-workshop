@@ -11,6 +11,7 @@ export interface Resource {
   name?: string;
   live?: boolean;
   characterId?: number;
+  current?: boolean;
   avatar?: string;
 }
 export interface Entry {

@@ -1,4 +1,4 @@
-import { clearLegacyField, clone, globalGroups, legacyConflict, LEGACY_NS, makeDocument, NS, ownGroups, serialize, stable, transformTransfer } from './core';
+import { clearLegacyField, clone, globalGroups, legacyConflict, LEGACY_NS, makeDocument, NS, orderOf, ownGroups, serialize, stable, transformTransfer } from './core';
 import type { Host, Kind, Raw, Resource, Snapshot, WorkDocument } from './types';
 import { assertPresetReady } from './native-preset-refresh';
 import { readLibrary, type EntryLibraryData } from './library';
@@ -31,9 +31,9 @@ function presetRaw(ref: Resource): Raw {
   return value;
 }
 function character(ref: Resource): Raw {
-  const value = ctx().characters[ref.characterId!];
-  if (!value || value.avatar !== ref.avatar) throw new Error('角色已变更，请重新打开');
-  return value;
+  const matches = ctx().characters.filter((ch: Raw) => ch.avatar === ref.avatar);
+  if (matches.length !== 1) throw new Error('角色已删除或标识冲突，请重新打开');
+  return matches[0];
 }
 function regexKey(ref: Resource) {
   return ref.scope === 'preset'
@@ -77,7 +77,66 @@ function groupFields(ext: Raw, snapshot: Snapshot, kind: Kind, restore = false) 
 }
 export class NativeHost implements Host {
   private libraryBusy = false;
-  constructor(private moduleLoader: (path: string) => Promise<any> = nativeModule) {}
+  constructor(private moduleLoader: (path: string) => Promise<any> = nativeModule,
+    private request: typeof fetch = (...args) => fetch(...args)) {}
+  private async characterRequest(ref: Resource, endpoint: string, body: Raw) {
+    character(ref);
+    const c = ctx(), headers = c.getRequestHeaders || (await this.moduleLoader('/script.js')).getRequestHeaders;
+    if (typeof headers !== 'function') throw new Error('酒馆缺少角色保存请求接口');
+    const response = await this.request(`/api/characters/${endpoint}`, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+    if (!response.ok) throw new Error(`角色读取或保存失败（${response.status}）：${ref.label}`);
+    return response;
+  }
+  private async characterExtensions(ref: Resource, fresh = false) {
+    const c = ctx(), ch = character(ref);
+    if (!fresh && c.characters[c.characterId]?.avatar === ref.avatar && !ch.shallow) return ch.data?.extensions || {};
+    const response = await this.characterRequest(ref, 'get', { avatar_url: ref.avatar });
+    const raw = await response.json();
+    character(ref);
+    if (!raw?.data || (raw.avatar && raw.avatar !== ref.avatar)) throw new Error('目标角色数据无效，请重新选择');
+    return raw.data.extensions || {};
+  }
+  private async writeCharacter(ref: Resource, fields: Raw) {
+    // One checked request by stable avatar, rather than index-based writes whose API swallows HTTP errors.
+    const before = await this.characterExtensions(ref, true);
+    let deletion = false;
+    const object = (value: any) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    const patch = (old: any, next: any): any => {
+      if (next === undefined) { deletion = true; return undefined; }
+      if (!object(next)) return clone(next);
+      return Object.fromEntries([...new Set([...Object.keys(object(old) ? old : {}), ...Object.keys(next)])]
+        .filter(key => stable(old?.[key]) !== stable(next[key]))
+        .map(key => [key, patch(old?.[key], next[key])]));
+    };
+    const payload = Object.fromEntries(Object.keys(fields).filter(key => stable(before[key]) !== stable(fields[key]))
+      .map(key => [key, patch(before[key], fields[key])]));
+    let unset: string | undefined;
+    if (deletion) {
+      unset = (await this.moduleLoader('/scripts/extensions.js')).UNSET_VALUE;
+      if (typeof unset !== 'string') throw new Error('当前酒馆缺少角色字段清理接口，已停止写入');
+    }
+    const encode = (value: any): any => value === undefined ? unset : object(value)
+      ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encode(item)])) : value;
+    await this.characterRequest(ref, 'merge-attributes', { avatar: ref.avatar, data: { extensions: encode(payload) } });
+    const written = await this.characterExtensions(ref, true);
+    if (Object.keys(fields).some(key => stable(written[key]) !== stable(fields[key])))
+      throw new Error(`角色保存校验失败：${ref.label}`);
+    const c = ctx(), ch = character(ref);
+    ch.data ||= {}; ch.data.extensions ||= {};
+    for (const [key, value] of Object.entries(fields)) {
+      if (value === undefined) delete ch.data.extensions[key]; else ch.data.extensions[key] = clone(value);
+    }
+    if (ch.json_data) {
+      const json = JSON.parse(ch.json_data); json.data ||= {}; json.data.extensions ||= {};
+      for (const [key, value] of Object.entries(fields)) {
+        if (value === undefined) delete json.data.extensions[key]; else json.data.extensions[key] = clone(value);
+      }
+      ch.json_data = JSON.stringify(json);
+      if (c.characters[c.characterId]?.avatar === ref.avatar && typeof document !== 'undefined') {
+        const input = document.querySelector<HTMLInputElement>('#character_json_data'); if (input) input.value = ch.json_data;
+      }
+    }
+  }
   async loadLibrary() { return readLibrary(ownGroups(ctx().extensionSettings, 'library')); }
   async saveLibrary(value: EntryLibraryData, baseline: string) {
     if (this.libraryBusy) throw new Error('条目库正在保存，请稍后重试');
@@ -141,7 +200,7 @@ export class NativeHost implements Host {
       update(() => ext.baibaiToolkit?.presetPromptGroups?.groups?.find((g: Raw) => g.id === id));
     const signal = () => { if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:runtime-sync')); };
     const persist = async () => {
-      if (ref.scope === 'scoped') await c.writeExtensionField(ref.characterId, NS, clone(ext[NS]));
+      if (ref.scope === 'scoped') await this.writeCharacter(ref, { [NS]: clone(ext[NS]) });
       else await module.saveSettings();
     };
     signal();
@@ -178,16 +237,20 @@ export class NativeHost implements Host {
       const name = m.getSelectedPresetName();
       if (name)
         list.unshift({ key: 'regex:preset:live', label: `${name} · 使用中`, name, kind, scope: 'preset', live: true });
-      const ch = c.characters[c.characterId];
-      if (ch)
-        list.unshift({
+      const characters = c.characters.map((ch: Raw, index: number) => ({ ch, index }))
+        .filter(({ ch }: any) => !!ch.avatar).sort((a: any, b: any) =>
+          Number(b.index === Number(c.characterId)) - Number(a.index === Number(c.characterId)) || String(a.ch.name || a.ch.avatar).localeCompare(String(b.ch.name || b.ch.avatar), 'zh-CN'));
+      const nameCounts = new Map<string, number>();
+      for (const { ch } of characters) nameCounts.set(ch.name, (nameCounts.get(ch.name) || 0) + 1);
+      list.unshift(...characters.map(({ ch, index }: any) => ({
           key: `regex:scoped:${ch.avatar}`,
-          label: `角色 · ${ch.name}`,
+          label: `角色 · ${ch.name || ch.avatar}${(nameCounts.get(ch.name) || 0) > 1 ? `（${ch.avatar}）` : ''}`,
           kind,
           scope: 'scoped',
-          characterId: Number(c.characterId),
+          characterId: index,
+          current: index === Number(c.characterId),
           avatar: ch.avatar,
-        });
+        } as Resource)));
       list.unshift({ key: 'regex:global', label: '全局正则', kind, scope: 'global' });
     }
     return list;
@@ -209,7 +272,7 @@ export class NativeHost implements Host {
         transfer: ext.entryGrouping,
       };
     }
-    const ext = rawExtensions(ref);
+    const ext = ref.scope === 'scoped' ? await this.characterExtensions(ref) : rawExtensions(ref);
     const raw = ref.scope === 'global' ? settings.regex || [] : ext.regex_scripts || [];
     return clone({
       raw,
@@ -329,22 +392,17 @@ export class NativeHost implements Host {
         }
       }
     } else if (ref.scope === 'scoped') {
-      const ch = character(ref),
-        ext = (ch.data.extensions ||= {});
+      const ext = await this.characterExtensions(ref, true);
       const own = { ...(ext[NS] || {}), regexGroups: clone(snapshot.own) };
+      if (snapshot.own === undefined) delete own.regexGroups;
       if (restore && snapshot.namespace) {
         if (snapshot.namespace.current === undefined) delete own.regexGroups;
         else own.regexGroups = clone(snapshot.namespace.current);
       }
-      await c.writeExtensionField(ref.characterId, 'regex_scripts', clone(snapshot.raw));
-      await c.writeExtensionField(ref.characterId, NS, own);
-      ext.regex_scripts = clone(snapshot.raw);
-      ext[NS] = own;
-      if (ext[LEGACY_NS]?.regexGroups !== undefined) {
-        clearLegacyField(ext, 'regexGroups');
-      }
-      if (restore && snapshot.namespace?.legacy !== undefined) { ext[LEGACY_NS] ||= {}; ext[LEGACY_NS].regexGroups = clone(snapshot.namespace.legacy); }
-      if (snapshot.namespace || ext[LEGACY_NS]) await c.writeExtensionField(ref.characterId, LEGACY_NS, clone(ext[LEGACY_NS] ?? {}));
+      const legacy = clone(ext[LEGACY_NS] || {}); delete legacy.regexGroups;
+      if (restore && snapshot.namespace?.legacy !== undefined) legacy.regexGroups = clone(snapshot.namespace.legacy);
+      await this.writeCharacter(ref, { regex_scripts: clone(snapshot.raw), [NS]: Object.keys(own).length ? own : undefined,
+        ...(snapshot.namespace || ext[LEGACY_NS] ? { [LEGACY_NS]: Object.keys(legacy).length ? legacy : undefined } : {}) });
     } else {
       if (!Array.isArray(settings.regex)) settings.regex = [];
       assignArray(settings.regex, snapshot.raw);
@@ -433,7 +491,8 @@ export class NativeHost implements Host {
       const mod = await this.moduleLoader('/scripts/openai.js');
       await mod.promptManager?.render?.();
     }
-    if (!refs.some(r => r.kind === 'regex')) return;
+    if (!refs.some(r => r.kind === 'regex' && (r.scope === 'global' ||
+      (r.scope === 'scoped' ? r.avatar === c.characters[c.characterId]?.avatar : r.name === getManager().getSelectedPresetName())))) return;
     const toggle = document.querySelector<HTMLInputElement>('#bai_bai_toolkit_regex_quick_operation_enabled');
     if (toggle?.checked) toggle.dispatchEvent(new Event('input', { bubbles: true }));
     else {
@@ -454,6 +513,7 @@ export class NativeHost implements Host {
       mod.promptManager.handleEdit({ target });
       return;
     }
+    if (ref.scope === 'scoped' && ref.avatar !== ctx().characters[ctx().characterId]?.avatar) return false;
     const root = document.querySelector(ref.scope === 'global' ? '#saved_regex_scripts' : ref.scope === 'scoped' ? '#saved_scoped_scripts' : '#saved_preset_scripts');
     const row = [...root?.querySelectorAll<HTMLElement>('.regex-script-label') || []].find(e => (e.dataset.regexScriptId || e.id) === id);
     const button = row?.querySelector<HTMLElement>('.edit_existing_regex');
@@ -465,7 +525,7 @@ export async function saveDocuments(
   host: Host,
   documents: WorkDocument[],
   saveOrder: string[] = [],
-  options: { preserveRaw?: boolean } = {},
+  options: { preserveRaw?: boolean; orderOnly?: boolean } = {},
 ): Promise<WorkDocument[]> {
   const dirty = documents
     .filter(d => d.dirty)
@@ -478,6 +538,17 @@ export async function saveDocuments(
   await host.commit(dirty.map(doc => {
     const snapshot = serialize(doc);
     if (options.preserveRaw) snapshot.raw = clone(doc.snapshot.raw);
+    if (options.orderOnly) {
+      snapshot.raw = clone(doc.snapshot.raw);
+      snapshot.own = clone(doc.snapshot.own);
+      if (doc.ref.kind === 'regex') {
+        const originals = new Map(snapshot.raw.map((r: Raw) => [String(r.id), r]));
+        snapshot.raw = doc.entries.map(e => originals.get(e.id));
+      } else {
+        const order = orderOf(snapshot.raw), originals = new Map(order.map(r => [String(r.identifier), r]));
+        order.splice(0, order.length, ...doc.entries.map(e => originals.get(e.id)!));
+      }
+    }
     return { doc, snapshot };
   }));
   // Reload all snapshots after all shared group stores have been committed.
