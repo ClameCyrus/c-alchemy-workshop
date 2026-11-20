@@ -21,6 +21,9 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   const popup = document.createElement('div');
   popup.className = 'prw-world-popup';
   popup.hidden = true;
+  const supportsPopover = typeof popup.showPopover === 'function';
+  if (supportsPopover) popup.setAttribute('popover', 'manual');
+  const viewport = window.visualViewport;
   const toolbar = document.createElement('div');
   toolbar.className = 'prw-world-toolbar';
   const search = document.createElement('input');
@@ -30,7 +33,8 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   search.hidden = true;
   const searchButton = button('搜索', () => {
     search.hidden = false;
-    search.focus();
+    searchButton.hidden = true;
+    search.focus({ preventScroll: true });
   });
   const list = document.createElement('div');
   list.id = 'prw-world-options-' + select.id;
@@ -45,17 +49,64 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   toggle.setAttribute('aria-expanded', 'false');
   toolbar.append(searchButton, search, button('收起', () => close(true)));
   popup.append(toolbar, list);
-  root.append(summary, toggle, popup);
+  root.append(summary, toggle);
+  (supportsPopover ? root : document.body).append(popup);
   select.classList.add('prw-world-picker-native');
   const adjacent = select.nextElementSibling;
   (adjacent?.classList.contains('select2-container') ? adjacent : select).after(root);
 
+  let positionFrame = 0;
+  const resizeObserver = new ResizeObserver(schedulePosition);
+
+  function position() {
+    positionFrame = 0;
+    const anchor = toggle.getBoundingClientRect();
+    if (!anchor.width || !anchor.height) { close(); return; }
+
+    const margin = 8;
+    const gap = 4;
+    const viewportWidth = viewport?.width ?? document.documentElement.clientWidth;
+    const leftEdge = (viewport?.offsetLeft ?? 0) + margin;
+    const rightEdge = leftEdge + viewportWidth - 2 * margin;
+    const topEdge = (viewport?.offsetTop ?? 0) + margin;
+    const bottomEdge = topEdge + (viewport?.height ?? window.innerHeight) - 2 * margin;
+    const below = bottomEdge - anchor.bottom - gap;
+    const above = anchor.top - gap - topEdge;
+    const width = Math.min(Math.max(anchor.width, 320), rightEdge - leftEdge);
+    const left = viewportWidth < 600 ? leftEdge : Math.max(leftEdge, Math.min(anchor.left, rightEdge - width));
+    const useFullHeight = Math.max(above, below) < 180 || anchor.top >= bottomEdge || anchor.bottom <= topEdge;
+    const openAbove = !useFullHeight && below < 420 && above > below;
+    const height = useFullHeight ? bottomEdge - topEdge : openAbove ? above : below;
+    const top = useFullHeight ? topEdge : openAbove ? anchor.top - gap : anchor.bottom + gap;
+
+    Object.assign(popup.style, {
+      left: `${left}px`, width: `${viewportWidth < 600 ? rightEdge - leftEdge : width}px`,
+      top: `${top}px`, maxHeight: `${Math.min(height, 420)}px`,
+    });
+    popup.classList.toggle('prw-world-popup-above', openAbove);
+  }
+  function schedulePosition() {
+    if (!popup.hidden && !positionFrame) positionFrame = requestAnimationFrame(position);
+  }
+  function onScroll(event: Event) {
+    if (event.target !== list) schedulePosition();
+  }
   function close(focus = false) {
+    if (popup.hidden) return;
+    if (supportsPopover) popup.hidePopover();
     popup.hidden = true;
     search.hidden = true;
+    searchButton.hidden = false;
     search.value = '';
     toggle.setAttribute('aria-expanded', 'false');
-    if (focus) toggle.focus();
+    cancelAnimationFrame(positionFrame);
+    positionFrame = 0;
+    resizeObserver.disconnect();
+    window.removeEventListener('resize', schedulePosition);
+    window.removeEventListener('scroll', onScroll, true);
+    viewport?.removeEventListener('resize', schedulePosition);
+    viewport?.removeEventListener('scroll', schedulePosition);
+    if (focus) toggle.focus({ preventScroll: true });
   }
   function open() {
     document.dispatchEvent(new CustomEvent('prw:world-picker-open', { detail: root }));
@@ -63,6 +114,16 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     toggle.setAttribute('aria-expanded', 'true');
     render();
     list.scrollTop = 0;
+    if (supportsPopover) popup.showPopover({ source: toggle });
+    position();
+    if (popup.hidden) return;
+    resizeObserver.observe(toggle);
+    const drawer = root.closest('#WorldInfo');
+    if (drawer) resizeObserver.observe(drawer);
+    window.addEventListener('resize', schedulePosition);
+    window.addEventListener('scroll', onScroll, true);
+    viewport?.addEventListener('resize', schedulePosition);
+    viewport?.addEventListener('scroll', schedulePosition);
   }
   function pick(option: HTMLOptionElement) {
     const selected = [...select.selectedOptions].map(value => value.value);
@@ -122,12 +183,23 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   }
   const update = () => render();
   const outside = (event: PointerEvent) => {
-    if (!popup.hidden && !root.contains(event.target as Node)) close();
+    const target = event.target as Node;
+    if (!root.contains(target) && !popup.contains(target)) close();
   };
   const other = (event: Event) => { if ((event as CustomEvent).detail !== root) close(); };
-  root.addEventListener('keydown', event => {
+  const onKey = (event: KeyboardEvent) => {
     if (popup.hidden) return;
     if (event.key === 'Escape') { event.stopPropagation(); close(true); return; }
+    if (event.key === 'Tab' && !event.shiftKey && event.target === toggle) {
+      event.preventDefault();
+      (search.hidden ? searchButton : search).focus({ preventScroll: true });
+      return;
+    }
+    if (event.key === 'Tab' && event.shiftKey && (event.target === searchButton || event.target === search)) {
+      event.preventDefault();
+      toggle.focus({ preventScroll: true });
+      return;
+    }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     const options = [...list.querySelectorAll('button')];
     if (!options.length) return;
@@ -136,7 +208,9 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
       : Math.max(0, Math.min(options.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
     event.preventDefault();
     options[next].focus();
-  });
+  };
+  root.addEventListener('keydown', onKey);
+  if (!supportsPopover) popup.addEventListener('keydown', onKey);
   search.addEventListener('input', () => { list.scrollTop = 0; render(); });
   document.addEventListener('pointerdown', outside, true);
   document.addEventListener('prw:world-picker-open', other);
@@ -147,6 +221,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   observer.observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'selected', 'hidden'] });
   render();
   return () => {
+    close();
     if (jq) jq(select).off('change.prwWorldPicker', update);
     else select.removeEventListener('change', update);
     observer.disconnect();
@@ -154,6 +229,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     document.removeEventListener('prw:world-picker-open', other);
     document.removeEventListener('prw:world-picker-sources', update);
     select.classList.remove('prw-world-picker-native');
+    popup.remove();
     root.remove();
   };
 }
