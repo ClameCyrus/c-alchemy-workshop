@@ -17,7 +17,8 @@ export interface VariableBinding {
 }
 export interface InsertionOptions {
   beforeId: string; after: boolean; groupId: string; keepGroups: boolean; enabled: boolean;
-  initId: string; initEnabled: boolean; referenceId: string; referenceText: string;
+  initId: string; initEnabled: boolean;
+  references: { id: string; text: string; baseline?: string }[];
   bindings: VariableBinding[];
   requirePositions?: boolean;
 }
@@ -54,7 +55,7 @@ export function insertionVariables(parts: LibraryPart[]) {
 }
 export function insertLibraryItems(original: WorkDocument, items: LibraryItem[], parts: LibraryPart[], options: InsertionOptions) {
   const doc = clone(original), chosen = parts.filter(p => p.selected), warnings: string[] = [];
-  if (!chosen.length) throw new Error('先选择条目条目');
+  if (!chosen.length) throw new Error('先选择条目');
   if (items.some(i => i.kind !== doc.ref.kind)) throw new Error('条目类型与目标不一致');
   if (doc.snapshot.legacyOwn && !doc.legacyResolved) throw new Error('新旧分组不同，请先选择分组方案');
   if (options.beforeId && !doc.entries.some(e => e.id === options.beforeId)) throw new Error('目标位置已不存在');
@@ -120,18 +121,24 @@ export function insertLibraryItems(original: WorkDocument, items: LibraryItem[],
     if (members.length) { doc.state.native = true; doc.state.groups.push({ ...clone(group), id: uid(), members }); }
   }
   if (doc.ref.kind === 'preset') {
-    if (options.bindings.some(b => b.reference) && !options.referenceId) throw new Error('选择引用位置，并在正文中插入引用');
-    if (options.referenceId) {
-      const entry = doc.entries.find(e => e.id === options.referenceId);
+    const required = options.bindings.filter(b => b.reference);
+    if (required.length && !options.references.length) throw new Error('选择引用位置，并在正文中插入引用');
+    const referenced = new Set<string>(), edited = new Set<string>();
+    for (const reference of options.references) {
+      const entry = doc.entries.find(e => e.id === reference.id);
       if (!entry || entry.raw.marker) throw new Error('引用条目不可编辑');
-      for (const b of options.bindings.filter(b => b.reference)) {
-        if (!scanVariables(options.referenceText).macros.some(m => m.scope === b.scope && m.name === b.to && /^get/.test(m.action)))
-          throw new Error(`请在正文中插入「${b.to}」的引用`);
-      }
-      entry.content = options.referenceText;
+      if (edited.has(entry.id) || (reference.baseline !== undefined && reference.baseline !== entry.content))
+        throw new Error(`「${entry.name}」的引用底稿已变化，请重新定位`);
+      edited.add(entry.id);
+      for (const macro of scanVariables(reference.text).macros)
+        if (!macro.dynamic && macro.action.startsWith('get')) referenced.add(variableKey(macro.scope, macro.name));
+      if (entry.content === reference.text) continue;
+      entry.content = reference.text;
       if (!entry.enabled) warnings.push('引用条目已关闭');
       if (doc.state.groups.some(g => !g.enabled && g.members.includes(entry.id))) warnings.push('引用条目所在分组已停用');
     }
+    for (const binding of required) if (!referenced.has(variableKey(binding.scope, binding.to)))
+      throw new Error(`请在正文中插入「${binding.to}」的引用`);
     const initializers = options.bindings.filter(b => b.initialize);
     if (initializers.length) {
       let entry = doc.entries.find(e => e.id === options.initId);

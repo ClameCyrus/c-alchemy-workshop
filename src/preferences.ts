@@ -14,6 +14,7 @@ const Preferences = z.object({
   presetLock: z.boolean().default(false),
   presetSwitch: z.boolean().default(false),
   presetRefresh: z.boolean().default(false),
+  worldbookPicker: z.boolean().default(false),
   kind: z.enum(['preset', 'regex']).default('preset'),
   operation: z.enum(['browse', 'drag', 'insert']).default('browse').transform(value => value === 'drag' ? 'insert' as const : value),
   transfer: z.enum(['copy', 'move']).default('copy'),

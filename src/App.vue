@@ -27,6 +27,10 @@ import { reorderGroup } from './group-order';
 import { summarizeChanges, reviewSignature } from './change-summary';
 import { VERSION } from './version';
 import EntryLibrary from './EntryLibrary.vue';
+import VariableTree from './VariableTree.vue';
+import VariableTools from './VariableTools.vue';
+import PresetTokens from './PresetTokens.vue';
+import { indexVariables, textareaOffset, textSelection } from './variables';
 import { collectLibraryItem, type LibraryItem } from './library';
 import type { ChangeSummary } from './change-summary';
 import type { Entry, Host, Match, OpenRequest, Provider, Side, WorkDocument } from './types';
@@ -51,6 +55,10 @@ const {
 } = storeToRefs(state);
 const view = computed(() => state.preferences.views[kind.value]);
 const opened = ref(false), appearanceDialog = ref(false), threshold = ref(0.5);
+const toolsExpanded = ref(false);
+const variableKey = ref('');
+const variableDocument = computed(() => state.documents[variableKey.value]);
+const editorArea = ref<HTMLTextAreaElement>();
 const panel = ref<HTMLDialogElement>();
 watch(opened, async value => {
   if (!value) return;
@@ -91,9 +99,11 @@ const confirmBox = ref<{
   message: string;
   destructive: boolean;
   changes?: ChangeSummary[];
+  saveKeys?: string[];
+  saveOptions?: WorkDocument[];
   text?: string;
   value?: string;
-  resolve: (value: string | boolean | null) => void;
+  resolve: (value: string | boolean | string[] | null) => void;
 } | null>(null);
 const menu = ref<{ key: string; id: string } | null>(null);
 const libraryOpen = ref(false), libraryCapture = ref<LibraryItem>(), libraryTarget = ref(''), libraryBody = ref(false);
@@ -119,7 +129,7 @@ function openEntryLibrary(doc?: WorkDocument, ids?: string[], body = false) {
     if (body && edit.value) {
       const area = document.querySelector<HTMLTextAreaElement>('#prw-entry-content');
       libraryCaret = { id: edit.value.value.id, docKey: edit.value.docKey, content: edit.value.value.content,
-        start: area?.selectionStart ?? edit.value.value.content.length, end: area?.selectionEnd ?? edit.value.value.content.length };
+        ...textSelection(edit.value.value.content, area ?? undefined) };
     }
     menu.value = null; libraryOpen.value = true;
   } catch (e) { error.value = (e as Error).message; }
@@ -128,7 +138,8 @@ function collectEdit() {
   if (!edit.value || !editDocument.value) return;
   const doc = clone(editDocument.value), entry = clone(edit.value.value);
   const area = document.querySelector<HTMLTextAreaElement>('#prw-entry-content');
-  if (area && area.selectionEnd > area.selectionStart) entry.content = entry.content.slice(area.selectionStart, area.selectionEnd);
+  const { start, end } = textSelection(entry.content, area ?? undefined);
+  if (end > start) entry.content = entry.content.slice(start, end);
   doc.entries = [entry]; doc.unused = [];
   openEntryLibrary(doc, [entry.id]);
 }
@@ -298,17 +309,26 @@ const displayRows = computed(() => Object.fromEntries((['left', 'right'] as Side
 async function confirmSave(onlyKey?: string) {
   const documents = state.dirty.filter(d => !onlyKey || d.ref.key === onlyKey);
   if (!documents.length || busy.value || confirmBox.value) return false;
-  const reviewed = reviewSignature(documents);
-  const ok = await new Promise<boolean>(resolve => {
+  const reviewed = reviewSignature(state.dirty);
+  const selectedKeys = documents.map(doc => doc.ref.key);
+  const choice = await new Promise<string[] | boolean | null>(resolve => {
     confirmBox.value = { title: '确认保存', message: '', destructive: false,
-      changes: documents.map(summarizeChanges), resolve: value => resolve(value === true) };
+      changes: onlyKey ? documents.map(summarizeChanges) : undefined,
+      saveKeys: onlyKey ? undefined : selectedKeys,
+      saveOptions: onlyKey ? undefined : documents,
+      resolve: value => resolve(typeof value === 'string' ? null : value) };
   });
-  if (!ok) return false;
-  if (reviewed !== reviewSignature(state.dirty.filter(d => !onlyKey || d.ref.key === onlyKey))) {
+  if (!choice || (Array.isArray(choice) && !choice.length)) return false;
+  if (reviewed !== reviewSignature(state.dirty)) {
     error.value = '改动已变化，请重新确认保存'; return false;
   }
-  return state.save(onlyKey);
+  return state.save(onlyKey ?? (Array.isArray(choice) ? choice : selectedKeys));
 }
+const selectedReview = computed(() => {
+  const keys = confirmBox.value?.saveKeys;
+  return keys ? new Map(state.planSave(keys).documents.map(doc =>
+    [doc.ref.key, doc.dirty ? summarizeChanges(doc) : null])) : undefined;
+});
 function ask(title: string, message: string, destructive = false): Promise<boolean> {
   return new Promise(resolve => {
     confirmBox.value = { title, message, destructive, resolve: value => resolve(value === true) };
@@ -329,10 +349,14 @@ function input(title: string, value = ''): Promise<string | null> {
 function finishConfirm(ok: boolean) {
   const box = confirmBox.value;
   confirmBox.value = null;
-  box?.resolve(ok ? (box.text ? box.value?.trim() || null : true) : null);
+  box?.resolve(ok ? box.saveKeys ?? (box.text ? box.value?.trim() || null : true) : null);
 }
 async function open(request: OpenRequest = {}) {
   try {
+    if (!opened.value) {
+      transferAction.value = 'copy';
+      toolsExpanded.value = false;
+    }
     opened.value = true;
     if (request.kind && request.kind !== kind.value) await state.switchKind(request.kind);
     else resources.value = props.host.resources(kind.value);
@@ -376,7 +400,7 @@ async function open(request: OpenRequest = {}) {
 }
 defineExpose({ open });
 function close() {
-  if (edit.value || confirmBox.value || groupDialog.value || appearanceDialog.value || libraryOpen.value) return;
+  if (edit.value || confirmBox.value || groupDialog.value || appearanceDialog.value || libraryOpen.value || variableKey.value || busy.value) return;
   opened.value = false;
   state.clearSelection(); explicitSources.value = []; transferSource.value = '';
   readerOpen.value = false;
@@ -390,13 +414,11 @@ async function pick(side: Side, key: string) {
   restoreScroll(side);
 }
 async function reload(doc: WorkDocument) {
+  if (busy.value) return;
   if (doc.dirty && !(await ask('重新载入', `${doc.ref.label}\n放弃这份未保存修改？`, true))) return;
   try {
     clearComparison();
-    state.documents[doc.ref.key] = makeDocument(doc.ref, await props.host.load(doc.ref));
-    state.history = [];
-    state.future = [];
-    selected.value[doc.ref.key] = [];
+    await state.reload(doc);
     error.value = '';
     notice.value = '已重新载入';
   } catch (e) {
@@ -726,6 +748,19 @@ function download(doc: WorkDocument, entries?: Entry[]) {
 }
 const groupDocument = computed(() => (groupDialog.value ? state.documents[groupDialog.value] : undefined));
 const editDocument = computed(() => (edit.value ? state.documents[edit.value.docKey] : undefined));
+const editorVariables = computed(() => editDocument.value?.ref.kind === 'preset' && edit.value
+  ? indexVariables(editDocument.value, edit.value.value).variables : []);
+function openEditor(doc: WorkDocument, entry: Entry, location?: { start: number; end: number }) {
+  pendingNew.value = null;
+  menu.value = null;
+  variableKey.value = '';
+  edit.value = { docKey: doc.ref.key, value: clone(entry) };
+  if (!location) return;
+  nextTick(() => {
+    editorArea.value?.setSelectionRange(textareaOffset(entry.content, location.start), textareaOffset(entry.content, location.end));
+    editorArea.value?.focus({ preventScroll: true });
+  });
+}
 function editPicked(side: Side) {
   const entry = pickedEntries.value[side], doc = docs.value[side];
   if (entry && doc) { readerOpen.value = false; edit.value = { docKey: doc.ref.key, value: clone(entry) }; }
@@ -781,6 +816,7 @@ function keydown(e: KeyboardEvent) {
   if (dragSource.value) { finishDrag(); return; }
   if (confirmBox.value) finishConfirm(false);
   else if (edit.value) edit.value = null;
+  else if (variableKey.value) variableKey.value = '';
   else if (groupDialog.value) groupDialog.value = null;
   else if (appearanceDialog.value) appearanceDialog.value = false;
   else if (menu.value) menu.value = null;
@@ -806,14 +842,14 @@ onBeforeUnmount(() => {
 
 <template>
   <dialog v-if="opened" ref="panel" id="prw-panel" class="prw-overlay" aria-label="Cの炼金工坊" @click.self="close" @cancel.prevent="close" @keydown.esc.stop.prevent="keydown">
-    <section class="prw-window">
+      <section class="prw-window" :class="{ 'tools-expanded': toolsExpanded }" :inert="busy">
       <header class="prw-header">
         <div class="brand">
           <i class="brand-icon fa-solid fa-flask" aria-hidden="true"></i><strong class="prw-brand-name">Cの炼金工坊</strong><small>{{ VERSION }}</small
           ><small v-if="host.demo" class="demo-badge">演示</small>
         </div>
         <div class="header-actions">
-          <button aria-label="设置" title="设置" @click="appearanceDialog = true">◐</button>
+          <button aria-label="设置" title="设置" @click="appearanceDialog = true">⚙</button>
           <button class="history-action" :disabled="!state.history.length || busy" aria-label="撤销" title="撤销" @click="state.undo">↶</button
           ><button class="history-action" :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button
           ><button
@@ -833,15 +869,16 @@ onBeforeUnmount(() => {
         </div>
         <button :class="{ active: dual }" @click="dual = !dual">对比</button>
         <button @click="openEntryLibrary()">条目库</button>
-        <select v-model="operation" aria-label="操作模式">
+        <button class="mobile-tools" :aria-expanded="toolsExpanded" @click="toolsExpanded = !toolsExpanded">工具</button>
+        <select v-model="operation" class="extra-tool" aria-label="操作模式">
           <option value="browse">浏览</option>
           <option value="insert">插入 / 拖动</option>
         </select>
-        <select v-if="operation !== 'browse'" v-model="transferAction" aria-label="转移方式">
+        <select v-if="operation !== 'browse'" v-model="transferAction" class="extra-tool" aria-label="转移方式">
           <option value="copy">复制</option>
           <option value="move">移动</option>
         </select>
-        <select v-model="filter" aria-label="筛选">
+        <select v-model="filter" class="extra-tool" aria-label="筛选">
           <option value="all">全部</option>
           <option v-if="dual" value="exact">相同</option>
           <option v-if="dual" value="different">有差异</option>
@@ -849,7 +886,7 @@ onBeforeUnmount(() => {
           <option v-if="dual" value="only-right">仅 {{ sideNames.right }}</option>
           <option value="disabled">已关闭</option>
         </select>
-        <label v-if="kind === 'preset'" class="compact-check"
+        <label v-if="kind === 'preset'" class="compact-check extra-tool"
           ><input v-model="includeUnused" type="checkbox" />未加入列表</label
         >
       </nav>
@@ -914,9 +951,9 @@ onBeforeUnmount(() => {
             >
               <option value="">选择{{ kind === 'regex' ? '范围' : '预设' }}</option>
               <option v-for="r in resources" :key="r.key" :value="r.key">{{ r.label }}</option></select
-            ><button v-if="docs[side]" aria-label="重新载入" title="重新载入" @click="reload(docs[side])">↻</button
-            ><button v-if="state.preferences.grouping && docs[side]" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
-            ><button v-if="docs[side]" aria-label="导出备份" title="导出备份" @click="download(docs[side])">⇩</button>
+            ><button v-if="docs[side]" class="extra-tool" aria-label="重新载入" title="重新载入" @click="reload(docs[side])">↻</button
+            ><button v-if="state.preferences.grouping && docs[side]" class="extra-tool" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
+            ><button v-if="docs[side]" class="extra-tool" aria-label="导出备份" title="导出备份" @click="download(docs[side])">⇩</button>
           </div>
           <template v-if="docs[side]">
             <div class="search-bar">
@@ -925,7 +962,7 @@ onBeforeUnmount(() => {
                 type="search"
                 placeholder="搜索名称或正文"
                 :aria-label="`${sideNames[side]} 搜索`"
-              /><select v-if="state.preferences.grouping && docs[side].state.groups.length" v-model="groupFilter[side]" aria-label="分组筛选">
+              /><select v-if="state.preferences.grouping && docs[side].state.groups.length" v-model="groupFilter[side]" class="extra-tool" aria-label="分组筛选">
                 <option value="">所有分组</option>
                 <option value="__ungrouped">未分组</option>
                 <option v-for="g in docs[side].state.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
@@ -938,7 +975,11 @@ onBeforeUnmount(() => {
                 >{{ lists[side].length }} 条<span v-if="selected[docs[side].ref.key]?.length">
                   · 已选 {{ selected[docs[side].ref.key].length }}</span
                 ></small
+              ><small v-if="filter !== 'all' || (state.preferences.grouping && groupFilter[side]) || includeUnused" class="mobile-tools">筛选中</small
               ><span class="spacer"></span
+              ><PresetTokens v-if="kind === 'preset' && host.countTokens" :key="docs[side].ref.key"
+                :doc="docs[side]" :host="host" :grouping="state.preferences.grouping" />
+              <button v-if="kind === 'preset'" @click="variableKey = docs[side].ref.key">变量</button
               ><button v-if="selected[docs[side].ref.key]?.length" @click="selected[docs[side].ref.key] = []">
                 取消选择</button
               ><button aria-label="添加条目" title="添加条目" @click="createEntry(docs[side])">＋</button>
@@ -1040,8 +1081,8 @@ onBeforeUnmount(() => {
                     "
                   >
                     {{ entry.enabled ? '●' : '○' }}</button
-                  ><button
-                    class="row-more"
+                  ><button class="row-edit" :aria-label="'编辑 ' + entry.name" title="编辑" @click.stop="openEditor(docs[side], entry)">✎</button
+                  ><button class="row-more"
                     :aria-label="`${entry.name} 更多`"
                     @click.stop="
                       menu =
@@ -1066,14 +1107,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div v-if="menu?.key === docs[side].ref.key && menu.id === entry.id" class="row-menu" @click.stop>
                   <button :disabled="protectedEntry(entry)" @click="openEntryLibrary(docs[side], (selected[docs[side].ref.key] || []).includes(entry.id) ? selected[docs[side].ref.key] : [entry.id])">收藏到条目库</button>
-                  <button
-                    @click="
-                      edit = { docKey: docs[side].ref.key, value: clone(entry) };
-                      menu = null;
-                    "
-                  >
-                    编辑</button
-                  ><button :disabled="protectedEntry(entry)" @click="beginTransfer(docs[side], entry, 'copy')">
+                  <button :disabled="protectedEntry(entry)" @click="beginTransfer(docs[side], entry, 'copy')">
                     复制到…</button
                   ><button :disabled="protectedEntry(entry)" @click="beginTransfer(docs[side], entry, 'move')">
                     移动到…</button
@@ -1148,7 +1182,8 @@ onBeforeUnmount(() => {
       <TextCompare v-if="readerOpen" :left="pickedEntries.left" :right="dual ? pickedEntries.right : undefined" :names="sideNames" :initial-page="readerPage" @close="readerOpen=false" @edit="editPicked" />
       <footer class="prw-footer">
         <small v-if="operation !== 'browse'"
-          >插入 / 拖动 · {{ transferAction === 'copy' ? '复制' : '移动'
+          :class="{ 'move-status': transferAction === 'move' }"
+          >插入 / 拖动 · {{ transferAction === 'copy' ? '复制' : '移动中'
           }}<span v-if="sourceIds.length"> · {{ sourceIds.length }} 条</span></small
         ><small v-else>{{ dirty.length ? `${dirty.length} 份待保存` : '' }}</small
         ><span class="spacer"></span><small role="status">{{ notice }}</small>
@@ -1157,6 +1192,10 @@ onBeforeUnmount(() => {
           <button :disabled="!state.future.length || busy" aria-label="重做" title="重做" @click="state.redo">↷</button>
         </div>
       </footer>
+      <div v-if="variableDocument" class="dialog-shade variable-shade" @click.self="variableKey = ''">
+        <VariableTree :doc="variableDocument" :grouping="state.preferences.grouping" @close="variableKey = ''"
+          @edit="(entry, location) => openEditor(variableDocument!, entry, location)" />
+      </div>
       <div v-if="edit && editDocument" class="dialog-shade" @pointerdown.capture="backdropDown" @click.self="backdropClose($event, () => edit = null)">
         <form class="edit-dialog" @submit.prevent="saveEdit">
           <header>
@@ -1181,8 +1220,10 @@ onBeforeUnmount(() => {
               ><label>深度<input v-model.number="edit.value.raw.injection_depth" type="number" min="0" /></label
               ><label>顺序<input v-model.number="edit.value.raw.injection_order" type="number" /></label>
             </div>
+            <VariableTools v-if="!edit.value.raw.marker" :key="edit.value.id" v-model="edit.value.content"
+              :area="editorArea" :variables="editorVariables" />
             <label
-              >正文<textarea id="prw-entry-content"
+              >正文<textarea id="prw-entry-content" ref="editorArea"
                 v-model="edit.value.content"
                 rows="13"
                 :readonly="!!edit.value.raw.marker"
@@ -1291,17 +1332,26 @@ onBeforeUnmount(() => {
       <div v-if="appearanceDialog" class="dialog-shade" @pointerdown.capture="backdropDown" @click.self="backdropClose($event, () => appearanceDialog = false)">
         <section class="appearance-dialog">
           <header><strong>设置</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
-          <label class="compact-check"><input v-model="state.preferences.grouping" type="checkbox" />启用分组功能</label>
-          <label class="compact-check"><input v-model="state.preferences.presetLock" type="checkbox" />启用预设条目锁</label>
-          <label class="compact-check"><input v-model="state.preferences.presetSwitch" type="checkbox" />优化预设切换并保护保存</label>
-          <label class="compact-check"><input v-model="state.preferences.presetRefresh" type="checkbox" />优化原生条目刷新与拖动</label>
-          <select v-model="state.preferences.appearance.mode" aria-label="配色方式">
-            <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
-          </select>
-          <div v-if="state.preferences.appearance.mode === 'custom'" class="palette-grid">
-            <label v-for="item in [{key:'background',label:'背景'},{key:'text',label:'文字'},{key:'muted',label:'次要文字'},{key:'accent',label:'强调'},{key:'border',label:'边框'}] as const" :key="item.key">
-              {{ item.label }}<input v-model="state.preferences.appearance[item.key]" type="color" :aria-label="item.label + '颜色'" />
-            </label>
+          <div class="settings-group">
+            <strong>工坊功能</strong>
+            <label class="compact-check"><input v-model="state.preferences.grouping" type="checkbox" />启用分组功能</label>
+            <label class="compact-check"><input v-model="state.preferences.presetLock" type="checkbox" />启用预设条目锁</label>
+          </div>
+          <div class="settings-group">
+            <strong>原生界面优化</strong>
+            <label class="compact-check"><input v-model="state.preferences.presetSwitch" type="checkbox" />优化预设切换并保护保存</label>
+            <label class="compact-check"><input v-model="state.preferences.presetRefresh" type="checkbox" />优化原生条目刷新与拖动</label>
+            <label class="compact-check"><input v-model="state.preferences.worldbookPicker" type="checkbox" />优化世界书选择</label>
+          </div>
+          <div class="settings-group">
+            <label class="appearance-mode">外观<select v-model="state.preferences.appearance.mode" aria-label="配色方式">
+              <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
+            </select></label>
+            <div v-if="state.preferences.appearance.mode === 'custom'" class="palette-grid">
+              <label v-for="item in [{key:'background',label:'背景'},{key:'text',label:'文字'},{key:'muted',label:'次要文字'},{key:'accent',label:'强调'},{key:'border',label:'边框'}] as const" :key="item.key">
+                {{ item.label }}<input v-model="state.preferences.appearance[item.key]" type="color" :aria-label="item.label + '颜色'" />
+              </label>
+            </div>
           </div>
         </section>
       </div>
@@ -1316,6 +1366,17 @@ onBeforeUnmount(() => {
             <strong>{{ confirmBox.title }}</strong>
           </header>
           <p v-if="confirmBox.message">{{ confirmBox.message }}</p>
+          <div v-if="confirmBox.saveOptions" class="save-review">
+            <section v-for="doc in confirmBox.saveOptions" :key="doc.ref.key">
+              <label class="compact-check">
+                <input v-model="confirmBox.saveKeys" type="checkbox" :value="doc.ref.key" />
+                <strong>{{ doc.ref.label }}</strong>
+              </label>
+              <ul v-if="selectedReview?.has(doc.ref.key)">
+                <li v-for="(line, i) in selectedReview.get(doc.ref.key)?.lines ?? ['没有需要写入的改动']" :key="i">{{ line }}</li>
+              </ul>
+            </section>
+          </div>
           <div v-if="confirmBox.changes" class="save-review">
             <section v-for="(change,i) in confirmBox.changes" :key="i">
               <strong>{{ change.name }} <small>{{ change.scope }}</small></strong>
@@ -1327,7 +1388,7 @@ onBeforeUnmount(() => {
           /></label>
           <footer>
             <button type="button" @click="finishConfirm(false)">取消</button
-            ><button :class="confirmBox.destructive ? 'destructive' : 'primary'" type="submit">确定</button>
+            ><button :class="confirmBox.destructive ? 'destructive' : 'primary'" :disabled="confirmBox.saveKeys?.length === 0" type="submit">确定</button>
           </footer>
         </form>
       </div>
@@ -2198,6 +2259,24 @@ onBeforeUnmount(() => {
 
 
 .appearance-dialog{width:min(340px,100%);padding:16px;background:var(--prw-bg);border:1px solid var(--prw-border);border-radius:12px;display:grid;gap:14px}.appearance-dialog header{display:flex;align-items:center;justify-content:space-between}.palette-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.palette-grid label{display:flex;align-items:center;justify-content:space-between;gap:8px}.palette-grid input[type=color]{width:38px;height:32px;padding:2px}
+#prw-panel .appearance-dialog { max-height:100%; overflow:auto; }
+.settings-group { display:grid; gap:8px; padding-top:10px; border-top:1px solid var(--prw-border); }
+.appearance-mode { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.appearance-mode select { width:auto; }
+#prw-panel .mobile-tools { display:none; }
+#prw-panel .move-status { font-weight:700; color:var(--prw-accent); }
+#prw-panel .preset-tokens { white-space:nowrap; font-variant-numeric:tabular-nums; }
+#prw-panel .entry-top .row-edit { min-width:29px; min-height:29px; flex-shrink:0; }
+@media(max-width:760px) {
+  #prw-panel .mobile-tools { display:inline-flex; align-items:center; }
+  #prw-panel .prw-window:not(.tools-expanded) .extra-tool { display:none; }
+  #prw-panel .prw-toolbar { padding-block:4px; }
+  #prw-panel .prw-toolbar > button, #prw-panel .prw-toolbar > .segmented { height:31px; }
+  #prw-panel .prw-toolbar button { padding-inline:7px; white-space:nowrap; }
+  #prw-panel .resource-bar { padding-block:5px; }
+  #prw-panel .resource-bar > select, #prw-panel .search-bar > input { height:33px; }
+  #prw-panel .list-toolbar { flex-wrap:wrap; }
+}
 .mobile-history{display:none}
 @media(max-width:420px){.header-actions .history-action{display:none}.mobile-history{display:flex;gap:4px}.mobile-history button{padding:3px 6px}.brand small{display:none}.header-actions button{padding:6px}.brand strong{flex-shrink:1}}
 

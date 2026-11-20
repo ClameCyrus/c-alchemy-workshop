@@ -1,3 +1,5 @@
+import type { Entry, WorkDocument } from './types';
+
 export type VariableScope = 'local' | 'global';
 export interface VariableMacro {
   start: number; end: number; nameStart: number; nameEnd: number;
@@ -70,4 +72,67 @@ export function variableMacro(scope: VariableScope, name: string, value?: string
   if (!validVariableName(name)) throw new Error('变量名不能包含冒号、括号、反斜线或换行');
   return value === undefined ? `{{get${scope === 'global' ? 'global' : ''}var::${name}}}`
     : `{{set${scope === 'global' ? 'global' : ''}var::${name}::${value}}}`;
+}
+
+export interface VariableLocation {
+  entry: Entry;
+  macro: VariableMacro;
+  paused: boolean;
+}
+export interface IndexedVariable {
+  key: string;
+  scope: VariableScope;
+  name: string;
+  reads: VariableLocation[];
+  writes: VariableLocation[];
+  other: VariableLocation[];
+}
+const entryScans = new WeakMap<Entry, { content: string; scan: VariableScan }>();
+export function indexVariables(doc: WorkDocument, draft?: Entry, grouping = true) {
+  const variables = new Map<string, IndexedVariable>();
+  const issues: { entry: Entry; message: string }[] = [];
+  const paused = new Set(grouping ? doc.state.groups.filter(group => !group.enabled).flatMap(group => group.members) : []);
+  const entries = [...doc.entries, ...doc.unused];
+  if (draft && !entries.some(entry => entry.id === draft.id)) entries.push(draft);
+  for (const original of entries) {
+    const entry = original.id === draft?.id ? draft : original;
+    let cached = entryScans.get(entry);
+    if (cached?.content !== entry.content) {
+      cached = { content: entry.content, scan: scanVariables(entry.content) };
+      entryScans.set(entry, cached);
+    }
+    const { scan } = cached;
+    issues.push(...scan.issues.map(message => ({ entry, message })));
+    for (const macro of scan.macros) {
+      if (macro.dynamic) continue;
+      const key = variableKey(macro.scope, macro.name);
+      const variable = variables.get(key) ?? { key, scope: macro.scope, name: macro.name, reads: [], writes: [], other: [] };
+      const location = { entry, macro, paused: paused.has(entry.id) };
+      if (macro.action.startsWith('get')) variable.reads.push(location);
+      else if (macro.action.startsWith('set')) variable.writes.push(location);
+      else variable.other.push(location);
+      variables.set(key, variable);
+    }
+  }
+  return { variables: [...variables.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')), issues };
+}
+
+export function spliceVariableText(content: string, start: number, end: number, text: string) {
+  return content.slice(0, start) + text + content.slice(end);
+}
+export function textareaOffset(content: string, offset: number) {
+  return content.slice(0, offset).replace(/\r\n/g, '\n').length;
+}
+export function textSelection(content: string, area?: HTMLTextAreaElement) {
+  function originalOffset(offset: number) {
+    for (const match of content.matchAll(/\r\n/g)) {
+      if (match.index >= offset) break;
+      offset++;
+    }
+    return offset;
+  }
+  return {
+    start: area ? originalOffset(area.selectionStart) : content.length,
+    end: area ? originalOffset(area.selectionEnd) : content.length,
+  };
 }

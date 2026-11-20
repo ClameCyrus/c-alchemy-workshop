@@ -45,5 +45,6 @@ export function summarizeChanges(doc: WorkDocument): ChangeSummary {
   return { name: doc.ref.label, scope: doc.ref.kind === 'preset' ? '预设' : '正则', lines: lines.length ? lines : ['保存资源与分组设置'] };
 }
 export function reviewSignature(docs: WorkDocument[]) {
-  return stable(docs.map(d => ({ key: d.ref.key, baseline: d.baseline, entries: d.entries, unused: d.unused, state: d.state, cleanup: d.cleanup, providerGroups: d.providerGroups })));
+  return stable(docs.map(d => ({ key: d.ref.key, baseline: d.baseline, entries: d.entries, unused: d.unused, state: d.state,
+    cleanup: d.cleanup, providerGroups: d.providerGroups, legacyResolved: d.legacyResolved })));
 }

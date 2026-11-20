@@ -135,3 +135,70 @@ body>.prw-entry-drag-preview{z-index:2147483646;background:var(--SmartThemeBlurT
 .prw-preset-lock[aria-pressed=true]{color:var(--SmartThemeQuoteColor,var(--prw-accent))!important}
 .prw-preset-locked :is(.drag-handle,.completion_prompt_manager_prompt_draggable){cursor:not-allowed!important}
 .prw-preset-locked .drag-handle{opacity:.25!important}
+.prw-world-picker-native, .prw-world-picker-native + .select2-container { display: none !important; }
+.prw-world-picker {
+  position:relative;
+  flex:1 1 12rem;
+  display:grid;
+  gap:4px;
+  min-width:0;
+  max-width:100%;
+  color:var(--SmartThemeBodyColor, #eee);
+}
+.prw-world-picker [hidden] { display:none !important; }
+.prw-world-picker .prw-world-selected {
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  min-width:0;
+}
+.prw-world-picker .prw-world-selected:empty { display:none; }
+.prw-world-picker button {
+  color:inherit;
+  font:inherit;
+  min-width:0;
+  background:var(--SmartThemeBlurTintColor, #25242b);
+  border:1px solid var(--SmartThemeBorderColor, #555);
+  border-radius:5px;
+  padding:5px 8px;
+  cursor:pointer;
+}
+.prw-world-picker :is(.prw-world-toggle, .prw-world-chip) {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  max-width:100%;
+  text-align:left;
+}
+.prw-world-picker .prw-world-popup {
+  position:absolute;
+  inset:calc(100% + 4px) 0 auto;
+  z-index:10;
+  display:grid;
+  gap:5px;
+  padding:6px;
+  border:1px solid var(--SmartThemeBorderColor, #555);
+  border-radius:6px;
+  background:var(--SmartThemeChatTintColor, #222128);
+  background-image:linear-gradient(var(--SmartThemeBlurTintColor, #25242b), var(--SmartThemeBlurTintColor, #25242b));
+}
+.prw-world-picker .prw-world-toolbar { display:flex; align-items:center; gap:5px; }
+.prw-world-picker .prw-world-toolbar input { flex:1; min-width:0; margin:0; }
+.prw-world-picker .prw-world-toolbar button:last-child { margin-left:auto; }
+.prw-world-picker .prw-world-options {
+  display:grid;
+  gap:3px;
+  max-height:min(42vh, 320px);
+  overflow:auto;
+  overscroll-behavior:contain;
+}
+.prw-world-picker button.prw-world-option {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
+  text-align:left;
+  overflow-wrap:anywhere;
+}
+.prw-world-picker .prw-world-option[aria-selected="true"] { font-weight:bold; border-color:currentColor; }
+.prw-world-picker .prw-world-option small { flex-shrink:0; max-width:40%; overflow-wrap:anywhere; }

@@ -79,6 +79,13 @@ export class NativeHost implements Host {
   private libraryBusy = false;
   constructor(private moduleLoader: (path: string) => Promise<any> = nativeModule,
     private request: typeof fetch = (...args) => fetch(...args)) {}
+  async countTokens(text: string): Promise<number> {
+    const context = ctx();
+    if (typeof context.getTokenCountAsync === 'function') return context.getTokenCountAsync(text);
+    const tokenizer = await this.moduleLoader('/scripts/tokenizers.js');
+    if (typeof tokenizer.getTokenCountAsync !== 'function') throw new Error('当前酒馆没有可用的异步 Token 计数接口');
+    return tokenizer.getTokenCountAsync(text);
+  }
   private async characterRequest(ref: Resource, endpoint: string, body: Raw) {
     character(ref);
     const c = ctx(), headers = c.getRequestHeaders || (await this.moduleLoader('/script.js')).getRequestHeaders;
@@ -161,7 +168,32 @@ export class NativeHost implements Host {
   }
   async worldbooks(): Promise<string[]> {
     const module = await this.moduleLoader('/scripts/world-info.js');
-    return [...module.world_names].sort((a: string, b: string) => a.localeCompare(b, 'zh-CN'));
+    const active = await this.activeWorldbooks();
+    return [...module.world_names].sort((a: string, b: string) =>
+      Number(Object.hasOwn(active, b)) - Number(Object.hasOwn(active, a)) || a.localeCompare(b, 'zh-CN'));
+  }
+  async activeWorldbooks(): Promise<Record<string, string[]>> {
+    const module = await this.moduleLoader('/scripts/world-info.js'), context = ctx();
+    const active: Record<string, string[]> = Object.create(null);
+    function add(name: unknown, source: string) {
+      if (typeof name !== 'string' || !name || !module.world_names?.includes(name)) return;
+      const tags = active[name] ??= [];
+      if (!tags.includes(source)) tags.push(source);
+    }
+    for (const name of module.selected_world_info ?? []) add(name, '全局');
+    const character = context.characters?.[context.characterId];
+    const members = context.groups?.find((group: Raw) => String(group.id) === String(context.groupId))?.members;
+    const characters: Raw[] = Array.isArray(members) ? context.characters.filter((card: Raw) => members.includes(card.avatar))
+      : character ? [character] : [];
+    for (const card of characters) {
+      add(card.data?.extensions?.world, '角色');
+      const file = card.avatar?.replace(/\.[^.]+$/, '');
+      const additional = module.world_info?.charLore?.find((lore: Raw) => lore.name === file)?.extraBooks;
+      for (const name of additional ?? []) add(name, '角色');
+    }
+    add(context.chatMetadata?.[module.METADATA_KEY || 'world_info'], '聊天');
+    add(context.powerUserSettings?.persona_description_lorebook, '用户设定');
+    return active;
   }
   async loadWorldbook(name: string): Promise<Raw> {
     const module = await this.moduleLoader('/scripts/world-info.js');

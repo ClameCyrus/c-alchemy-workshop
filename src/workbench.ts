@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { clone, makeDocument, transferEntries } from './core';
 import { saveDocuments } from './native';
 import { readPreferences, writePreferences } from './preferences';
+import { captureMove, restoreMove, type PendingMove } from './pending-move';
 import type { Host, Kind, Resource, Side, WorkDocument } from './types';
 
 export const useWorkbench = defineStore('c-alchemy-workshop', () => {
@@ -16,6 +17,9 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
   });
   watch(() => [preferences.presetSwitch, preferences.presetRefresh], () => {
     if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:preset-performance-preference'));
+  });
+  watch(() => preferences.worldbookPicker, () => {
+    if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:worldbook-preference'));
   });
   const documents = reactive<Record<string, WorkDocument>>({});
   const kind = ref<Kind>(preferences.kind);
@@ -37,6 +41,7 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
   const history = ref<string[]>([]),
     future = ref<string[]>([]);
   const saveOrder = ref<string[]>([]);
+  const moves = ref<PendingMove[]>([]);
   let host: Host;
   const requests = { left: 0, right: 0 };
   const dirty = computed(() => Object.values(documents).filter(d => d.dirty));
@@ -94,14 +99,16 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
     else if (left) { keys.left = left.key; preferences.views[kind.value].left = left.key; }
     if (keys.right && (!documents[keys.right] || (refresh && !documents[keys.right].dirty))) await load('right', keys.right);
   }
-  const snapshot = () => JSON.stringify({ documents, saveOrder: saveOrder.value });
+  const snapshot = () => JSON.stringify({ documents, saveOrder: saveOrder.value, moves: moves.value });
   function restore(json: string) {
     const value = JSON.parse(json);
     Object.keys(documents).forEach(k => delete documents[k]);
     Object.assign(documents, value.documents);
     saveOrder.value = value.saveOrder;
+    moves.value = value.moves;
   }
   function change(fn: () => void) {
+    if (busy.value) return;
     const before = snapshot();
     try {
       fn();
@@ -117,6 +124,7 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
     }
   }
   function undo() {
+    if (busy.value) return;
     const value = history.value.pop();
     if (value) {
       future.value.push(snapshot());
@@ -124,6 +132,7 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
     }
   }
   function redo() {
+    if (busy.value) return;
     const value = future.value.pop();
     if (value) {
       history.value.push(snapshot());
@@ -157,6 +166,8 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
       let position = beforeId,
         afterPosition = after;
       for (const item of sources) {
+        const move = transferAction.value === 'move' && item.key !== targetKey
+          ? captureMove(documents[item.key], targetKey, item.ids) : undefined;
         const added = transferEntries(
           documents[item.key],
           target,
@@ -167,6 +178,7 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
           groupId,
         );
         if (added.length) {
+          if (move) moves.value.push(move);
           position = added[added.length - 1];
           afterPosition = true;
           success = true;
@@ -185,15 +197,38 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
     }
   }
   function checkSaveOnly(key: string) {
-    if (saveOrder.value.includes(key) && dirty.value.some(d => d.ref.key !== key && saveOrder.value.includes(d.ref.key)))
+    if (moves.value.some(move => move.source === key || move.target === key))
       throw new Error('此预设有尚未保存的跨预设操作，请先保存或放弃修改');
   }
-  async function save(onlyKey?: string) {
+  function planSave(keysToSave: string[]) {
+    const picked = new Set(keysToSave);
+    const remaining: PendingMove[] = [];
+    const restored = new Map<string, WorkDocument>();
+    for (const move of [...moves.value].reverse()) {
+      const source = picked.has(move.source), target = picked.has(move.target);
+      if (!source && !target) remaining.unshift(move);
+      if (source === target) continue;
+      const doc = restored.get(move.source) ?? clone(documents[move.source]);
+      restoreMove(doc, move);
+      restored.set(move.source, doc);
+    }
+    return {
+      documents: dirty.value.filter(doc => picked.has(doc.ref.key)).map(doc => restored.get(doc.ref.key) ?? doc),
+      restored,
+      remaining,
+    };
+  }
+  async function save(selection?: string | string[]) {
     if (busy.value) return false;
     busy.value = true;
     try {
-      if (onlyKey) checkSaveOnly(onlyKey);
-      const updated = await saveDocuments(host, dirty.value.filter(d => !onlyKey || d.ref.key === onlyKey), saveOrder.value);
+      if (typeof selection === 'string') checkSaveOnly(selection);
+      const keysToSave = typeof selection === 'string' ? [selection] : selection ?? dirty.value.map(doc => doc.ref.key);
+      if (!keysToSave.length) return false;
+      const plan = planSave(keysToSave);
+      const updated = await saveDocuments(host, plan.documents, saveOrder.value);
+      for (const [key, doc] of plan.restored) documents[key] = doc;
+      moves.value = plan.remaining;
       updated.forEach(doc => {
         documents[doc.ref.key] = doc;
       });
@@ -202,7 +237,8 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
       saveOrder.value = saveOrder.value.filter(key => !updated.some(d => d.ref.key === key));
       clearSelection();
       error.value = '';
-      notice.value = updated.some(d => d.ref.live) ? '已保存；使用中版本已应用' : '已保存';
+      notice.value = updated.some(d => d.ref.live) ? '已保存；使用中版本已应用'
+        : updated.length ? '已保存' : '没有需要写入的改动';
       return true;
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -216,9 +252,23 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
     history.value = [];
     future.value = [];
     saveOrder.value = [];
+    moves.value = [];
     clearSelection();
     error.value = '';
     notice.value = '已放弃修改';
+  }
+  async function reload(doc: WorkDocument) {
+    busy.value = true;
+    try {
+      const next = makeDocument(doc.ref, await host.load(doc.ref));
+      const plan = planSave([doc.ref.key]);
+      for (const [key, restored] of plan.restored) documents[key] = restored;
+      moves.value = plan.remaining;
+      documents[doc.ref.key] = next;
+      history.value = [];
+      future.value = [];
+      clearSelection();
+    } finally { busy.value = false; }
   }
   return {
     preferences,
@@ -249,7 +299,9 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
     transfer,
     transferMany,
     save,
+    planSave,
     checkSaveOnly,
     discard,
+    reload,
   };
 });

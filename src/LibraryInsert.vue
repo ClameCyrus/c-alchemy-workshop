@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { clone, serialize, stable } from './core';
 import { libraryParts, insertionVariables, insertLibraryItems, type LibraryPart, type VariableBinding } from './library-insertion';
-import { scanVariables, variableKey, variableMacro } from './variables';
+import { scanVariables, spliceVariableText, textareaOffset, textSelection, variableKey, variableMacro } from './variables';
 import { summarizeChanges } from './change-summary';
 import EntryPicker from './EntryPicker.vue';
 import RegexFields from './RegexFields.vue';
@@ -16,7 +16,20 @@ const target = computed(() => props.documents.find(d => d.ref.key === targetKey.
 const parts = ref(libraryParts(props.items)), bindings = ref<VariableBinding[]>([]);
 const placing = ref(parts.value.map(p => p.key)), enabled = ref(false);
 const task = ref<'position' | 'init' | 'reference'>('position'), mobile = ref<'source' | 'target'>('source');
-const initId = ref(''), initEnabled = ref(true), referenceId = ref(''), referenceText = ref(''), referenceEditing = ref(false);
+const initId = ref(''), initEnabled = ref(true), referenceId = ref(''), referenceEditing = ref(false);
+const referenceDrafts = ref(new Map<string, { id: string; text: string; baseline: string }>());
+const referenceText = computed({
+  get: () => referenceDrafts.value.get(referenceId.value)?.text ?? '',
+  set: value => { const draft = referenceDrafts.value.get(referenceId.value); if (draft) draft.text = value; },
+});
+const referenceOrder = ref<string[]>([]);
+const queuedReferences = computed(() => referenceOrder.value.flatMap(key => {
+  const binding = bindings.value.find(binding => binding.key === key && binding.reference);
+  return binding ? [binding] : [];
+}));
+watch(() => bindings.value.filter(binding => binding.reference).map(binding => binding.key), keys => {
+  referenceOrder.value = [...referenceOrder.value.filter(key => keys.includes(key)), ...keys.filter(key => !referenceOrder.value.includes(key))];
+});
 const referenceArea = ref<HTMLTextAreaElement>(), preview = ref<ReturnType<typeof insertLibraryItems> | null>(null), problem = ref('');
 const loading = ref(false), loadFailed = ref(false);
 let targetRequest = 0;
@@ -35,7 +48,7 @@ watch(variables, values => {
 }, { immediate: true });
 watch(targetKey, async key => {
   const ticket = ++targetRequest;
-  initId.value = ''; referenceId.value = ''; referenceText.value = ''; referenceEditing.value = false; preview.value = null;
+  initId.value = ''; referenceId.value = ''; referenceDrafts.value.clear(); referenceEditing.value = false; preview.value = null;
   parts.value.forEach(p => { delete p.position; }); placing.value = remaining.value.map(p => p.key);
   if (!key) { loading.value = false; loadFailed.value = true; return; }
   loading.value = true; loadFailed.value = false;
@@ -48,10 +61,10 @@ watch([target, parts, bindings, enabled], () => {
   try {
     stagePlan.value = insertLibraryItems(target.value, props.items, placed.value, {
       beforeId: '', after: false, groupId: '', keepGroups: false, enabled: enabled.value,
-      initId: '', initEnabled: false, referenceId: '', referenceText: '',
+      initId: '', initEnabled: false, references: [],
       bindings: bindings.value.map(b => ({ ...clone(b), initialize: false, reference: false })), requirePositions: true,
     }); stageError.value = '';
-  } catch (e) { stageError.value = (e as Error).message; }
+  } catch (e) { stagePlan.value = null; stageError.value = (e as Error).message; }
 }, { deep: true, immediate: true });
 const displayTarget = computed(() => stagePlan.value?.doc || target.value);
 const stagedIds = computed(() => Object.fromEntries(placed.value.filter(p => p.insertedId).map(p => [p.insertedId!, p.key])));
@@ -72,6 +85,7 @@ function place(position: NonNullable<LibraryPart['position']>) {
 }
 function returnLibraryItem(key: string) {
   const part = parts.value.find(p => p.key === key); if (!part?.position) return;
+  if (part.insertedId) referenceDrafts.value.delete(part.insertedId);
   for (const other of parts.value) if (other.position?.id === part.insertedId) other.position = clone(part.position);
   delete part.position; placing.value = [part.key]; mobile.value = 'source';
 }
@@ -83,15 +97,34 @@ function applyText() {
 function selectTask(value: typeof task.value) { task.value = value; mobile.value = 'target'; }
 function choose(id: string) {
   if (task.value === 'init') { initId.value = id; mobile.value = 'source'; }
-  else { referenceId.value = id; referenceText.value = target.value?.entries.find(e => e.id === id)?.content || ''; referenceEditing.value = true; }
+  else {
+    const entry = displayTarget.value?.entries.find(entry => entry.id === id);
+    if (!entry) return;
+    if (!referenceDrafts.value.has(id)) referenceDrafts.value.set(id, { id, text: entry.content, baseline: entry.content });
+    referenceId.value = id; referenceEditing.value = true;
+  }
 }
-function insertReferences() {
+function moveReference(key: string, direction: number) {
+  const order = referenceOrder.value, index = order.indexOf(key);
+  const next = index + direction;
+  if (next < 0 || next >= order.length) return;
+  [order[index], order[next]] = [order[next], order[index]];
+}
+function insertReferences(references: VariableBinding[]) {
   try {
-    const text = bindings.value.filter(b => b.reference).map(b => variableMacro(b.scope, b.to)).join('\n');
+    const text = references.map(b => variableMacro(b.scope, b.to)).join('\n');
     if (!text) throw new Error('先勾选要插入的引用');
-    const el = referenceArea.value, start = el?.selectionStart ?? referenceText.value.length, end = el?.selectionEnd ?? start;
-    referenceText.value = referenceText.value.slice(0, start) + text + referenceText.value.slice(end); problem.value = '';
+    const el = referenceArea.value, { start, end } = textSelection(referenceText.value, el);
+    referenceText.value = spliceVariableText(referenceText.value, start, end, text);
+    problem.value = '';
+    const caret = textareaOffset(referenceText.value, start + text.length);
+    nextTick(() => el?.setSelectionRange(caret, caret));
   } catch (e) { problem.value = (e as Error).message; }
+}
+function resetReference() {
+  referenceDrafts.value.delete(referenceId.value);
+  choose(referenceId.value);
+  problem.value = '';
 }
 function review() {
   try {
@@ -101,7 +134,7 @@ function review() {
     const active = new Set(insertionVariables(placed.value).map(v => v.key));
     preview.value = insertLibraryItems(target.value, props.items, placed.value, {
       beforeId: '', after: false, groupId: '', keepGroups: false, enabled: enabled.value,
-      initId: initId.value, initEnabled: initEnabled.value, referenceId: referenceId.value, referenceText: referenceText.value,
+      initId: initId.value, initEnabled: initEnabled.value, references: [...referenceDrafts.value.values()].map(clone),
       bindings: props.items[0].kind === 'preset' ? clone(bindings.value.filter(b => active.has(b.key))) : [], requirePositions: true,
     }); problem.value = '';
   } catch (e) { problem.value = (e as Error).message; }
@@ -152,7 +185,7 @@ const changes = computed(() => {
               <div class="library-fields"><button @click="selectTask('init')">初始化位置</button><button @click="selectTask('reference')">引用位置</button></div>
               <small v-if="initId">初始化 · {{ initId === '__new' ? '新建条目' : target?.entries.find(e => e.id === initId)?.name }}</small>
               <label v-if="initId === '__new'" class="library-check"><input v-model="initEnabled" type="checkbox" />启用初始化条目</label>
-              <small v-if="referenceId">引用 · {{ target?.entries.find(e => e.id === referenceId)?.name }}</small>
+              <small v-if="referenceDrafts.size">引用 · {{ referenceDrafts.size }} 个条目</small>
             </details>
           </div>
         </section>
@@ -162,11 +195,18 @@ const changes = computed(() => {
           <small v-if="loading">读取中…</small>
           <template v-else-if="target && !loadFailed">
             <template v-if="task === 'reference' && referenceEditing && referenceId">
-              <div class="library-fields"><button @click="referenceEditing=false">返回条目列表</button><strong>{{ target.entries.find(e => e.id === referenceId)?.name }}</strong></div>
+              <div class="library-fields"><button @click="referenceEditing=false">返回条目列表</button><strong>{{ displayTarget?.entries.find(e => e.id === referenceId)?.name }}</strong></div>
               <label class="library-reference-editor">正文<textarea ref="referenceArea" v-model="referenceText" rows="12" aria-label="引用位置正文"></textarea></label>
-              <div class="library-fields"><button @click="insertReferences">在光标处插入引用</button><button @click="mobile='source'">返回条目</button></div>
+              <div class="library-reference-options">
+                <div v-for="(b, i) in queuedReferences" :key="b.key" class="library-fields">
+                  <button :aria-label="'插入 ' + b.to" @click="insertReferences([b])">{{ b.to }}<small v-if="b.scope === 'global'"> · 全局</small></button>
+                  <button :disabled="i === 0" :aria-label="'上移 ' + b.to" @click="moveReference(b.key, -1)">↑</button>
+                  <button :disabled="i === queuedReferences.length - 1" :aria-label="'下移 ' + b.to" @click="moveReference(b.key, 1)">↓</button>
+                </div>
+              </div>
+              <div class="library-fields"><button :disabled="!queuedReferences.length" @click="insertReferences(queuedReferences)">在光标处插入引用</button><button @click="resetReference">重置此处引用</button><button @click="mobile='source'">返回条目</button></div>
             </template>
-            <EntryPicker v-else :doc="task === 'position' ? displayTarget! : target" :mode="task === 'position' ? 'position' : 'entry'" :selected="task === 'init' ? initId : referenceId" :allow-new="task === 'init'" :grouping="grouping" :staged="task === 'position' ? stagedIds : undefined" @position="place" @choose="choose" @remove="returnLibraryItem" />
+            <EntryPicker v-else :doc="task === 'init' ? target : displayTarget!" :mode="task === 'position' ? 'position' : 'entry'" :selected="task === 'init' ? initId : referenceId" :allow-new="task === 'init'" :grouping="grouping" :staged="task === 'position' ? stagedIds : undefined" @position="place" @choose="choose" @remove="returnLibraryItem" />
           </template>
         </section>
       </main>
@@ -195,5 +235,6 @@ const changes = computed(() => {
 #prw-mount .library-variable-row>details{font-size:11px}
 #prw-mount .library-reference-editor{flex:1;min-height:0}
 #prw-mount .library-reference-editor textarea{flex:1;min-height:120px}
+#prw-mount .library-reference-options{display:flex;flex-wrap:wrap;gap:5px;max-height:110px;overflow:auto;flex-shrink:0}
 @media(max-width:760px){#prw-mount .library-insert-columns{display:flex;flex-direction:column;gap:0}#prw-mount :is(.library-source-pane,.library-target-pane){flex:1}#prw-mount .library-target-pane{border:0;padding:0}#prw-mount .library-insert .library-mobile-hidden{display:none!important}#prw-mount .library-mobile-tabs{display:flex;gap:6px}#prw-mount .library-mobile-tabs>button{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 </style>

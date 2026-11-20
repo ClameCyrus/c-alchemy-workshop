@@ -78,6 +78,8 @@ export interface Host {
   loadLibrary?: () => Promise<import('./library').EntryLibraryData>;
   saveLibrary?: (value: import('./library').EntryLibraryData, baseline: string) => Promise<void>;
   worldbooks?: () => Promise<string[]>;
+  activeWorldbooks?: () => Promise<Record<string, string[]>>;
+  countTokens?: (text: string) => Promise<number>;
   loadWorldbook?: (name: string) => Promise<Raw>;
 }
 export interface OpenRequest {
