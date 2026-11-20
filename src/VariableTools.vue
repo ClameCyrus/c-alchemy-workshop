@@ -37,7 +37,8 @@ function insert(variableName: string, target: VariableScope) {
       throw new Error('选区中的宏未闭合，请重新选择正文');
     content.value = spliceVariableText(content.value, selection.start, initializing ? selection.start : selection.end, macro);
     const end = textareaOffset(content.value, selection.start + macro.length);
-    mode.value = undefined;
+    if (showNameInput.value) mode.value = undefined;
+    problem.value = '';
     nextTick(() => {
       props.area?.setSelectionRange(end, end);
       if (matchMedia('(pointer: fine)').matches) props.area?.focus({ preventScroll: true });

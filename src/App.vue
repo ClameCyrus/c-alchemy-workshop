@@ -841,7 +841,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <dialog v-if="opened" ref="panel" id="prw-panel" class="prw-overlay" aria-label="Cの炼金工坊" @click.self="close" @cancel.prevent="close" @keydown.esc.stop.prevent="keydown">
+  <dialog v-if="opened" ref="panel" id="prw-panel" class="prw-overlay" :class="{ 'prw-custom-palette': state.preferences.appearance.mode === 'custom' }"
+    aria-label="Cの炼金工坊" @click.self="close" @cancel.prevent="close" @keydown.esc.stop.prevent="keydown">
       <section class="prw-window" :class="{ 'tools-expanded': toolsExpanded }" :inert="busy">
       <header class="prw-header">
         <div class="brand">

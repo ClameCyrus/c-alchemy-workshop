@@ -112,7 +112,7 @@ export function indexVariables(doc: WorkDocument, draft?: Entry, grouping = true
       if (macro.action.startsWith('get')) variable.reads.push(location);
       else if (macro.action.startsWith('set')) {
         variable.writes.push(location);
-        if (macro.value === '') variable.emptySets.push(location);
+        if (macro.value?.trim() === '') variable.emptySets.push(location);
       }
       else variable.other.push(location);
       variables.set(key, variable);
