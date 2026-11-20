@@ -5,12 +5,14 @@ import type { Entry, WorkDocument } from './types';
 
 const props = defineProps<{ doc: WorkDocument; grouping: boolean }>();
 const emit = defineEmits<{ close: []; edit: [entry: Entry, location: VariableMacro] }>();
+const showEmptySets = defineModel<boolean>('showEmptySets', { required: true });
 const index = computed(() => indexVariables(props.doc, undefined, props.grouping));
 const filter = ref('all'), query = ref('');
 const visible = computed(() => index.value.variables.filter(variable => {
   if (!variable.name.toLowerCase().includes(query.value.trim().toLowerCase())) return false;
   if (filter.value === 'unread') return !!variable.writes.length && !variable.reads.length;
   if (filter.value === 'unwritten') return !!variable.reads.length && !variable.writes.length;
+  if (showEmptySets.value && filter.value === 'missingEmpty') return !variable.emptySets.length;
   return true;
 }));
 const scopes: { id: VariableScope; label: string }[] = [
@@ -32,20 +34,23 @@ function locationStatus({ entry, paused }: VariableLocation) {
         <option value="all">全部</option>
         <option value="unread">有写入，未见 get</option>
         <option value="unwritten">有 get，未见 set</option>
+        <option v-if="showEmptySets" value="missingEmpty">未见空值初始化</option>
       </select>
     </div>
+    <label class="compact-check"><input v-model="showEmptySets" type="checkbox"
+      @change="filter === 'missingEmpty' && (filter = 'all')" />检查空值初始化</label>
     <div class="variable-tree-list">
       <small v-if="!visible.length">没有匹配的变量</small>
       <details v-for="scope in scopes.filter(scope => visible.some(v => v.scope === scope.id))" :key="scope.id" open>
         <summary>{{ scope.label }}</summary>
         <details v-for="variable in visible.filter(v => v.scope === scope.id)" :key="variable.key" class="variable-tree-item">
-          <summary><strong>{{ variable.name }}</strong> <small>set {{ variable.writes.length }} · get {{ variable.reads.length }}</small></summary>
+          <summary><strong>{{ variable.name }}</strong> <small>set {{ variable.writes.length }} · get {{ variable.reads.length }}<template v-if="showEmptySets"> · {{ variable.emptySets.length ? '空值初始化 ' + variable.emptySets.length : '未见空值初始化' }}</template></small></summary>
           <template v-for="branch in [{label:'写入', items:variable.writes},{label:'引用', items:variable.reads},{label:'其他操作', items:variable.other}]" :key="branch.label">
             <div v-if="branch.items.length" class="variable-branch">
               <small>{{ branch.label }}</small>
               <button v-for="location in branch.items" :key="location.entry.id + '/' + location.macro.start" type="button"
                 @click="emit('edit', location.entry, location.macro)">
-                <span>{{ location.entry.name }} <small>{{ locationStatus(location) }}</small></span>
+                <span>{{ location.entry.name }} <small v-if="showEmptySets && variable.emptySets.includes(location)">空值初始化 </small><small>{{ locationStatus(location) }}</small></span>
                 <code>{{ location.entry.content.slice(location.macro.start, Math.min(location.macro.end, location.macro.start + 95)) }}</code>
               </button>
             </div>

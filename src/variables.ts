@@ -85,6 +85,7 @@ export interface IndexedVariable {
   name: string;
   reads: VariableLocation[];
   writes: VariableLocation[];
+  emptySets: VariableLocation[];
   other: VariableLocation[];
 }
 const entryScans = new WeakMap<Entry, { content: string; scan: VariableScan }>();
@@ -106,10 +107,13 @@ export function indexVariables(doc: WorkDocument, draft?: Entry, grouping = true
     for (const macro of scan.macros) {
       if (macro.dynamic) continue;
       const key = variableKey(macro.scope, macro.name);
-      const variable = variables.get(key) ?? { key, scope: macro.scope, name: macro.name, reads: [], writes: [], other: [] };
+      const variable = variables.get(key) ?? { key, scope: macro.scope, name: macro.name, reads: [], writes: [], emptySets: [], other: [] };
       const location = { entry, macro, paused: paused.has(entry.id) };
       if (macro.action.startsWith('get')) variable.reads.push(location);
-      else if (macro.action.startsWith('set')) variable.writes.push(location);
+      else if (macro.action.startsWith('set')) {
+        variable.writes.push(location);
+        if (macro.value === '') variable.emptySets.push(location);
+      }
       else variable.other.push(location);
       variables.set(key, variable);
     }

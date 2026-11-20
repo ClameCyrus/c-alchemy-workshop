@@ -1193,7 +1193,7 @@ onBeforeUnmount(() => {
         </div>
       </footer>
       <div v-if="variableDocument" class="dialog-shade variable-shade" @click.self="variableKey = ''">
-        <VariableTree :doc="variableDocument" :grouping="state.preferences.grouping" @close="variableKey = ''"
+        <VariableTree v-model:show-empty-sets="state.preferences.showEmptySets" :doc="variableDocument" :grouping="state.preferences.grouping" @close="variableKey = ''"
           @edit="(entry, location) => openEditor(variableDocument!, entry, location)" />
       </div>
       <div v-if="edit && editDocument" class="dialog-shade" @pointerdown.capture="backdropDown" @click.self="backdropClose($event, () => edit = null)">
