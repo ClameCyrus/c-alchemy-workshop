@@ -41,6 +41,19 @@ body>.prw-entry-drag-preview{z-index:2147483646;background:var(--SmartThemeBlurT
 #completion_prompt_manager_list .prw-enhanced-preset .prompt_manager_prompt_controls>span{align-self:center!important}
 /* This icon is an inline native action, not a themed menu button. Reserve its slot. */
 @layer c-alchemy-workshop-protection {
+#prw-panel.prw-custom-palette .variable-tree {
+  color:var(--prw-text)!important;
+  background:var(--prw-bg)!important;
+}
+#prw-panel.prw-custom-palette .variable-tree :is(summary,strong,span,label,code),
+#prw-panel.prw-custom-palette :is(.variable-tree,.variable-tools) small {
+  color:var(--prw-text)!important;
+  -webkit-text-fill-color:currentColor!important;
+  background:transparent!important;
+  text-shadow:none!important;
+}
+#prw-panel.prw-custom-palette :is(.variable-tree,.variable-tools) small { color:var(--prw-muted)!important; }
+#prw-panel.prw-custom-palette .variable-branch code { border:0!important; box-shadow:none!important; }
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more{appearance:none!important;display:inline-flex!important;position:static!important;inset:auto!important;float:none!important;transform:none!important;translate:none!important;rotate:none!important;scale:none!important;flex:0 0 28px!important;width:28px!important;min-width:28px!important;max-width:28px!important;height:28px!important;min-height:28px!important;max-height:28px!important;box-sizing:border-box!important;align-items:center!important;justify-content:center!important;align-self:center!important;margin:0!important;padding:0!important;border:0!important;border-radius:4px!important;background:transparent!important;color:inherit!important;box-shadow:none!important;text-shadow:none!important;filter:none!important;line-height:1!important;font-size:14px!important;overflow:hidden!important;opacity:1!important;transition:none!important;animation:none!important}
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more:hover{background:color-mix(in srgb,var(--SmartThemeBodyColor,currentColor) 10%,transparent)!important}
 :is(#completion_prompt_manager_list,#regex_container) button.prw-row-more:focus-visible{outline:1px solid var(--SmartThemeQuoteColor,currentColor)!important;outline-offset:-2px!important}
