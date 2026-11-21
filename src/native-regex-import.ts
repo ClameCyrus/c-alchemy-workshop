@@ -1,5 +1,5 @@
 import { makeDocument } from './core';
-import { groupingEnabled } from './preferences';
+import { readPreferences } from './preferences';
 import { groupedRegexSnapshot, importGroups, type ImportGroup } from './regex-import';
 import type { Host, Raw, Resource, Scope } from './types';
 
@@ -24,7 +24,7 @@ export function installRegexImport(host: Host, guard: (ref: Resource) => void) {
   function attach(dialog: HTMLDialogElement) {
     const radio = dialog.querySelector<HTMLInputElement>('#regex_import_target_global');
     const filesInput = document.querySelector<HTMLInputElement>('#import_regex_file');
-    if (!radio || !filesInput?.files?.length || !groupingEnabled()) return;
+    if (!radio || !filesInput?.files?.length || !readPreferences().regexImportGroup) return;
     const popup: ImportPopup | undefined = context()?.Popup?.util?.popups?.find((item: ImportPopup) => item.dlg === dialog);
     if (!popup) return;
     const files = Array.from(filesInput.files);
@@ -95,7 +95,7 @@ export function installRegexImport(host: Host, guard: (ref: Resource) => void) {
         if (!ref || !choice) throw new Error('请重新选择目标分组');
         const assertTarget = () => {
           const current = resource(scope());
-          if (stop.signal.aborted || current?.key !== ref.key || current?.name !== ref.name || !groupingEnabled())
+          if (stop.signal.aborted || current?.key !== ref.key || current?.name !== ref.name || !readPreferences().regexImportGroup)
             throw new Error('导入目标已变化，请重新选择');
           guard(ref);
         };

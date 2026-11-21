@@ -53,6 +53,7 @@ const {
   error,
   notice,
 } = storeToRefs(state);
+const grouping = computed(() => kind.value === 'regex' ? state.preferences.regexGrouping : state.preferences.presetGrouping);
 const view = computed(() => state.preferences.views[kind.value]);
 const opened = ref(false), appearanceDialog = ref(false), threshold = ref(0.5);
 const toolsExpanded = ref(false);
@@ -263,7 +264,7 @@ const lists = computed(() => {
       if (query && !searchable(entry).includes(query)) return false;
       const group = groupOf(doc, entry.id);
       if (
-        state.preferences.grouping && groupFilter.value[side] &&
+        grouping.value && groupFilter.value[side] &&
         (groupFilter.value[side] === '__ungrouped' || doc.state.groups.some(g => g.id === groupFilter.value[side])) &&
         (groupFilter.value[side] === '__ungrouped' ? !!group : group?.id !== groupFilter.value[side])
       )
@@ -301,7 +302,7 @@ function toggleGroup(doc: WorkDocument, id: string) {
 }
 const displayRows = computed(() => Object.fromEntries((['left', 'right'] as Side[]).map(side => {
   const doc = docs.value[side];
-  return [side, doc ? browseRows(lists.value[side], state.preferences.grouping ? doc.state.groups : [],
+  return [side, doc ? browseRows(lists.value[side], grouping.value ? doc.state.groups : [],
     id => !!view.value.folds[foldKey(doc, id)],
     !!searchQuery.value[side].trim() || !!rangeStart.value || !!(anchor.value && anchor.value.key !== doc.ref.key && relationFilter.value !== 'off'),
   ) : []];
@@ -526,7 +527,7 @@ function beginTransfer(doc: WorkDocument, entry: Entry, action: 'copy' | 'move')
 }
 const comparingSelection = computed(() => dual.value && !!anchorEntry.value);
 function insertionPosition(doc: WorkDocument, id?: string, after = false, groupId?: string) {
-  if (state.preferences.grouping) {
+  if (grouping.value) {
     if (groupId && !id) {
       id = doc.entries.filter(e => groupOf(doc, e.id)?.id === groupId).at(-1)?.id;
       after = !!id;
@@ -788,7 +789,7 @@ watch(kind, () => {
   clearTimeout(searchTimer);
   searchQuery.value = { ...search.value };
 });
-watch(() => state.preferences.grouping, enabled => { if (!enabled) { rangeStart.value = null; groupDialog.value = null; menu.value = null; } });
+watch(grouping, enabled => { if (!enabled) { rangeStart.value = null; groupDialog.value = null; menu.value = null; } });
 watch(operation, () => {
   finishDrag();
   rangeStart.value = null;
@@ -953,7 +954,7 @@ onBeforeUnmount(() => {
               <option value="">选择{{ kind === 'regex' ? '范围' : '预设' }}</option>
               <option v-for="r in resources" :key="r.key" :value="r.key">{{ r.label }}</option></select
             ><button v-if="docs[side]" class="extra-tool" aria-label="重新载入" title="重新载入" @click="reload(docs[side])">↻</button
-            ><button v-if="state.preferences.grouping && docs[side]" class="extra-tool" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
+            ><button v-if="grouping && docs[side]" class="extra-tool" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
             ><button v-if="docs[side]" class="extra-tool" aria-label="导出备份" title="导出备份" @click="download(docs[side])">⇩</button>
           </div>
           <template v-if="docs[side]">
@@ -963,7 +964,7 @@ onBeforeUnmount(() => {
                 type="search"
                 placeholder="搜索名称或正文"
                 :aria-label="`${sideNames[side]} 搜索`"
-              /><select v-if="state.preferences.grouping && docs[side].state.groups.length" v-model="groupFilter[side]" class="extra-tool" aria-label="分组筛选">
+              /><select v-if="grouping && docs[side].state.groups.length" v-model="groupFilter[side]" class="extra-tool" aria-label="分组筛选">
                 <option value="">所有分组</option>
                 <option value="__ungrouped">未分组</option>
                 <option v-for="g in docs[side].state.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
@@ -976,16 +977,16 @@ onBeforeUnmount(() => {
                 >{{ lists[side].length }} 条<span v-if="selected[docs[side].ref.key]?.length">
                   · 已选 {{ selected[docs[side].ref.key].length }}</span
                 ></small
-              ><small v-if="filter !== 'all' || (state.preferences.grouping && groupFilter[side]) || includeUnused" class="mobile-tools">筛选中</small
+              ><small v-if="filter !== 'all' || (grouping && groupFilter[side]) || includeUnused" class="mobile-tools">筛选中</small
               ><span class="spacer"></span
               ><PresetTokens v-if="kind === 'preset' && host.countTokens" :key="docs[side].ref.key"
-                :doc="docs[side]" :host="host" :grouping="state.preferences.grouping" />
+                :doc="docs[side]" :host="host" :grouping="state.preferences.presetGrouping" />
               <button v-if="kind === 'preset'" @click="variableKey = docs[side].ref.key">变量</button
               ><button v-if="selected[docs[side].ref.key]?.length" @click="selected[docs[side].ref.key] = []">
                 取消选择</button
               ><button aria-label="添加条目" title="添加条目" @click="createEntry(docs[side])">＋</button>
             </div>
-            <div v-if="state.preferences.grouping && ((!docs[side].snapshot.own && docs[side].sources.length) || (docs[side].snapshot.legacyOwn && !docs[side].legacyResolved))" class="group-notice">
+            <div v-if="grouping && ((!docs[side].snapshot.own && docs[side].sources.length) || (docs[side].snapshot.legacyOwn && !docs[side].legacyResolved))" class="group-notice">
               <button @click="openGroups(docs[side])">选择分组方案 · {{ docs[side].sources.length }}</button>
             </div>
             <div
@@ -1113,7 +1114,7 @@ onBeforeUnmount(() => {
                   ><button :disabled="protectedEntry(entry)" @click="beginTransfer(docs[side], entry, 'move')">
                     移动到…</button
                   ><button
-                    v-if="state.preferences.grouping"
+                    v-if="grouping"
                     :disabled="entry.unused"
                     @click="
                       rangeStart = { key: docs[side].ref.key, id: entry.id };
@@ -1122,7 +1123,7 @@ onBeforeUnmount(() => {
                   >
                     从这里分组</button
                   ><select
-                    v-if="state.preferences.grouping && docs[side].state.groups.length"
+                    v-if="grouping && docs[side].state.groups.length"
                     aria-label="加入分组"
                     :value="groupOf(docs[side], entry.id)?.id || ''"
                     @change="
@@ -1194,7 +1195,7 @@ onBeforeUnmount(() => {
         </div>
       </footer>
       <div v-if="variableDocument" class="dialog-shade variable-shade" @click.self="variableKey = ''">
-        <VariableTree v-model:show-empty-sets="state.preferences.showEmptySets" :doc="variableDocument" :grouping="state.preferences.grouping" @close="variableKey = ''"
+        <VariableTree v-model:show-empty-sets="state.preferences.showEmptySets" :doc="variableDocument" :grouping="state.preferences.presetGrouping" @close="variableKey = ''"
           @edit="(entry, location) => openEditor(variableDocument!, entry, location)" />
       </div>
       <div v-if="edit && editDocument" class="dialog-shade" @pointerdown.capture="backdropDown" @click.self="backdropClose($event, () => edit = null)">
@@ -1288,7 +1289,7 @@ onBeforeUnmount(() => {
           </footer>
         </form>
       </div>
-      <EntryLibrary v-if="libraryOpen" :host="host" :capture="libraryCapture" :documents="libraryDocuments" :target="libraryTarget" :load-target="loadLibraryTarget" :body-mode="libraryBody" :grouping="state.preferences.grouping" :folds="state.preferences.library.folds" @close="libraryOpen = false" @apply="applyLibraryItems" @text="insertLibraryText" />
+      <EntryLibrary v-if="libraryOpen" :host="host" :capture="libraryCapture" :documents="libraryDocuments" :target="libraryTarget" :load-target="loadLibraryTarget" :body-mode="libraryBody" :grouping="state.preferences.presetGrouping" :folds="state.preferences.library.folds" @close="libraryOpen = false" @apply="applyLibraryItems" @text="insertLibraryText" />
       <div v-if="groupDocument" class="dialog-shade" @pointerdown.capture="backdropDown" @click.self="backdropClose($event, () => groupDialog = null)">
         <section class="group-dialog">
           <header><strong>分组方案</strong><button @click="groupDialog = null">✕</button></header>
@@ -1335,13 +1336,16 @@ onBeforeUnmount(() => {
           <header><strong>设置</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
           <div class="settings-group">
             <strong>工坊功能</strong>
-            <label class="compact-check"><input v-model="state.preferences.grouping" type="checkbox" />启用分组功能</label>
+            <label class="compact-check"><input v-model="state.preferences.presetGrouping" type="checkbox" />启用预设分组</label>
+            <label class="compact-check"><input v-model="state.preferences.regexGrouping" type="checkbox" />启用正则分组</label>
             <label class="compact-check"><input v-model="state.preferences.presetLock" type="checkbox" />启用预设条目锁</label>
           </div>
           <div class="settings-group">
             <strong>原生界面优化</strong>
             <label class="compact-check"><input v-model="state.preferences.presetSwitch" type="checkbox" />优化预设切换并保护保存</label>
             <label class="compact-check"><input v-model="state.preferences.presetRefresh" type="checkbox" />优化原生条目刷新与拖动</label>
+            <label class="compact-check"><input v-model="state.preferences.regexImportGroup" type="checkbox" />导入正则时选择分组</label>
+            <label class="compact-check"><input v-model="state.preferences.regexDeferredRefresh" type="checkbox" />关闭正则面板后统一刷新</label>
             <label class="compact-check"><input v-model="state.preferences.worldbookPicker" type="checkbox" />优化世界书选择</label>
           </div>
           <div class="settings-group">

@@ -9,8 +9,11 @@ import type { Host, Kind, Resource, Side, WorkDocument } from './types';
 export const useWorkbench = defineStore('c-alchemy-workshop', () => {
   const preferences = reactive(readPreferences());
   watch(preferences, () => writePreferences(preferences), { deep: true, flush: 'sync' });
-  watch(() => preferences.grouping, () => {
+  watch(() => [preferences.presetGrouping, preferences.regexGrouping], () => {
     if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:grouping-preference'));
+  });
+  watch(() => preferences.regexDeferredRefresh, () => {
+    if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:regex-refresh-preference'));
   });
   watch(() => preferences.presetLock, () => {
     if (typeof document !== 'undefined') document.dispatchEvent(new Event('prw:lock-preference'));

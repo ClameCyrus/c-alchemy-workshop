@@ -9,6 +9,7 @@ import { installGroupRuntime } from './group-runtime';
 import { installPresetLock } from './preset-lock';
 import { installNativePresetRefresh } from './native-preset-refresh';
 import { installWorldbookPicker } from './worldbook-picker';
+import { installRegexRefresh } from './native-regex-refresh';
 import { VERSION } from './version';
 import type { Host, OpenRequest } from './types';
 
@@ -26,6 +27,7 @@ function init() {
   const stopLock = installPresetLock();
   const stopPresetRefresh = host.demo ? () => {} : installNativePresetRefresh();
   const stopWorldbookPicker = installWorldbookPicker(host);
+  const stopRegexRefresh = installRegexRefresh();
   const buttons: HTMLElement[] = [];
   const wand = document.querySelector('#extensionsMenu');
   if (wand) {
@@ -84,6 +86,7 @@ function init() {
     stopLock();
     stopPresetRefresh();
     stopWorldbookPicker();
+    stopRegexRefresh();
     cleanMenus();
     app.unmount();
     mount.remove();

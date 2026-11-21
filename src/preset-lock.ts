@@ -7,7 +7,7 @@ const ROW = '.completion_prompt_manager_prompt[data-pm-identifier]';
 const INTERACTIVE = '.prompt_manager_prompt_controls,a,button,input,select,textarea,[contenteditable="true"],[data-preset-prompt-action],.prw-row-more,.prw-preset-lock';
 const DRAG = 'completion_prompt_manager_prompt_draggable';
 let groupDragUnlocked = false;
-export const nativeGroupDragAllowed = (kind: Kind) => groupingEnabled() && (kind === 'regex' || groupDragUnlocked);
+export const nativeGroupDragAllowed = (kind: Kind) => groupingEnabled(kind) && (kind === 'regex' || groupDragUnlocked);
 export function installPresetLock() {
   const abort = new AbortController(), signal = abort.signal;
   let enabled = readPreferences().presetLock;

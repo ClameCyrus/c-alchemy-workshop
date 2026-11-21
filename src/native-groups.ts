@@ -142,8 +142,7 @@ export function installNativeGroupViews(host: Host, actions: Actions) {
   }
   function scan() {
     if (stopped || nativeDragBusy()) return;
-    if (!groupingEnabled()) { for (const key of views.keys()) remove(key); return; }
-    const current = scopes(), seen = new Set(current.map(s => s.ref.key));
+    const current = scopes().filter(scope => groupingEnabled(scope.ref.kind)), seen = new Set(current.map(s => s.ref.key));
     for (const key of views.keys()) if (!seen.has(key)) remove(key);
     for (const { root, ref } of current) {
       if (ref.scope === 'preset' && ref.live && presetTransitionBusy()) continue;

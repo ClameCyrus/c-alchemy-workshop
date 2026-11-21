@@ -10,7 +10,10 @@ const View = z.object({
 }).prefault({});
 const Color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const Preferences = z.object({
-  grouping: z.boolean().default(true),
+  presetGrouping: z.boolean().default(true),
+  regexGrouping: z.boolean().default(true),
+  regexImportGroup: z.boolean().default(true),
+  regexDeferredRefresh: z.boolean().default(false),
   presetLock: z.boolean().default(false),
   presetSwitch: z.boolean().default(false),
   presetRefresh: z.boolean().default(false),
@@ -31,12 +34,17 @@ const Preferences = z.object({
 }).prefault({});
 export type PreferencesState = z.infer<typeof Preferences>;
 const KEY = 'c-alchemy-workshop:ui:v1';
-export function groupingEnabled() {
-  try { return JSON.parse(localStorage.getItem(KEY) || '{}').grouping !== false; }
-  catch { return true; }
+function storedPreferences() {
+  try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+export function groupingEnabled(kind: 'preset' | 'regex') {
+  const raw = storedPreferences();
+  return (raw[kind === 'preset' ? 'presetGrouping' : 'regexGrouping'] ?? raw.grouping) !== false;
 }
 export function readPreferences(): PreferencesState {
-  try { return Preferences.parse(JSON.parse(localStorage.getItem(KEY) || '{}')); }
+  const raw = storedPreferences();
+  try { return Preferences.parse({ presetGrouping: raw.grouping, regexGrouping: raw.grouping, regexImportGroup: raw.grouping, ...raw }); }
   catch { return Preferences.parse({}); }
 }
 export function writePreferences(value: PreferencesState) {

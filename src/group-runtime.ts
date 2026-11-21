@@ -57,7 +57,7 @@ export function gatePromptCollection(collection: any, blocked: Set<string>) {
 }
 
 export function installGroupRuntime(loadModule: (path: string) => Promise<any> = path => import(/* webpackIgnore: true */ new URL(path, location.href).href)) {
-  let enabled = groupingEnabled();
+  let presetEnabled = groupingEnabled('preset'), regexEnabled = groupingEnabled('regex');
   let stopped = false, scheduled = false, engine: any, openai: any;
   let wanted = new Set<Raw>();
   const bindings = new Map<Raw, () => void>();
@@ -68,7 +68,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
   function promptPlan() {
     const state = promptState();
     if (state !== lastPromptState) { lastPromptState = state; promptBlocked = pausedMembers(state); }
-    return { active: enabled && nativeGrouping(state), blocked: promptBlocked };
+    return { active: presetEnabled && nativeGrouping(state), blocked: promptBlocked };
   }
   function sync() {
     if (stopped || !engine) return;
@@ -81,7 +81,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
       [engine.SCRIPT_TYPES.PRESET, ownGroups(live?.extensions, 'regexGroups')],
       [engine.SCRIPT_TYPES.SCOPED, ownGroups(ch?.data?.extensions, 'regexGroups')],
     ]) {
-      if (!enabled || !nativeGrouping(state)) continue;
+      if (!regexEnabled || !nativeGrouping(state)) continue;
       const blocked = pausedMembers(state);
       if (blocked.size) for (const script of engine.getScriptsByType(type)) if (blocked.has(String(script.id))) wanted.add(script);
     }
@@ -128,7 +128,7 @@ export function installGroupRuntime(loadModule: (path: string) => Promise<any> =
   for (const event of events) c.eventSource.on(event, schedule);
   document.addEventListener('prw:resources-saved', schedule);
   document.addEventListener('prw:runtime-sync', schedule);
-  const preference = () => { enabled = groupingEnabled(); schedule(); };
+  const preference = () => { presetEnabled = groupingEnabled('preset'); regexEnabled = groupingEnabled('regex'); schedule(); };
   document.addEventListener('prw:grouping-preference', preference);
   void Promise.all([
     loadModule('/scripts/extensions/regex/engine.js'),

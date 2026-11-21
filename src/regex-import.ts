@@ -39,7 +39,14 @@ export function groupedRegexSnapshot(doc: WorkDocument, scripts: Raw[], choice: 
   const snapshot = clone(doc.snapshot);
   const added = scripts.map(script => ({ ...script, id: uid() }));
   const ids = added.map(script => script.id);
-  snapshot.raw.push(...added);
+  const source = doc.sources.find(plan => plan.provider === match.schemes[0]);
+  const members = new Set(source?.groups.find(group => group.id === match.id)?.members);
+  // Older imports may have left a detached member at the bottom of the execution list.
+  // Append to the first contiguous section without moving existing rules.
+  const first = snapshot.raw.findIndex((script: Raw) => members.has(String(script.id)));
+  let position = first < 0 ? snapshot.raw.length : first;
+  while (position < snapshot.raw.length && members.has(String(snapshot.raw[position].id))) position++;
+  snapshot.raw = [...snapshot.raw.slice(0, position), ...added, ...snapshot.raw.slice(position)];
   for (const scheme of match.schemes) {
     if (scheme === 'own') {
       snapshot.own.groups.find((group: Raw) => group.id === match.id).members.push(...ids);

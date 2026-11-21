@@ -9,8 +9,13 @@ import type { Host, Resource, WorkDocument } from './types';
 const props = defineProps<{ host: Host; guard: (ref: Resource) => void; changed: (refs: Resource[]) => void }>();
 const operations = new QuickOperations(props.host, props.guard, props.changed);
 const stage = ref<'' | 'targets' | 'groups' | 'name' | 'confirm' | 'error'>('');
-const grouping = ref(groupingEnabled());
-const groupingPreference = () => { grouping.value = groupingEnabled(); if (!grouping.value) reset(); };
+const groupFlags = () => ({ preset: groupingEnabled('preset'), regex: groupingEnabled('regex') });
+const grouping = ref(groupFlags());
+const groupingPreference = () => {
+  grouping.value = groupFlags();
+  const ref = pending.value?.ref || target.value;
+  if (ref && !grouping.value[ref.kind]) reset();
+};
 document.addEventListener('prw:grouping-preference', groupingPreference);
 const dialog = ref<HTMLDialogElement>();
 const busy = ref(false), message = ref(''), notice = ref(''), query = ref('');
@@ -141,7 +146,7 @@ defineExpose({ transfer, group, erase, reset,
       <div class="quick-list">
         <div v-for="ref in filteredTargets" :key="ref.key" class="quick-target">
           <button :disabled="busy" @click="execute(ref)">{{ ref.label }}</button>
-          <button v-if="grouping" :disabled="busy" :aria-label="`选择${ref.label}分组`" title="选择分组" @click="groups(ref)">›</button>
+          <button v-if="grouping[ref.kind]" :disabled="busy" :aria-label="`选择${ref.label}分组`" title="选择分组" @click="groups(ref)">›</button>
         </div>
       </div>
     </template>

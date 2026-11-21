@@ -111,9 +111,18 @@ export class NativeHost implements Host {
     if (!raw?.data || (raw.avatar && raw.avatar !== ref.avatar)) throw new Error('目标角色数据无效，请重新选择');
     return raw.data.extensions || {};
   }
-  private async writeCharacter(ref: Resource, fields: Raw) {
+  async saveCharacterRegexFlags(avatar: string, changes: ReadonlyMap<string, boolean>) {
+    const ref: Resource = { kind: 'regex', scope: 'scoped', key: 'regex:scoped:' + avatar, label: avatar, avatar };
+    await this.writeCharacter(ref, (extensions: Raw) => {
+      if (!Array.isArray(extensions.regex_scripts)) throw new Error('角色正则已变化');
+      return { regex_scripts: extensions.regex_scripts.map((script: Raw) =>
+        changes.has(script.id) ? { ...script, disabled: changes.get(script.id) } : script) };
+    });
+  }
+  private async writeCharacter(ref: Resource, update: Raw | ((extensions: Raw) => Raw)) {
     // One checked request by stable avatar, rather than index-based writes whose API swallows HTTP errors.
     const before = await this.characterExtensions(ref, true);
+    const fields: Raw = typeof update === 'function' ? update(before) : update;
     let deletion = false;
     const object = (value: any) => value !== null && typeof value === 'object' && !Array.isArray(value);
     const patch = (old: any, next: any): any => {
@@ -138,8 +147,12 @@ export class NativeHost implements Host {
       throw new Error(`角色保存校验失败：${ref.label}`);
     const c = ctx(), ch = character(ref);
     ch.data ||= {}; ch.data.extensions ||= {};
+    // Checkbox edits already updated the live objects. Keep later clicks made during the request.
+    if (typeof update === 'function' && Array.isArray(ch.data.extensions.regex_scripts))
+      fields.regex_scripts = ch.data.extensions.regex_scripts;
     for (const [key, value] of Object.entries(fields)) {
-      if (value === undefined) delete ch.data.extensions[key]; else ch.data.extensions[key] = clone(value);
+      if (value === undefined) delete ch.data.extensions[key];
+      else if (ch.data.extensions[key] !== value) ch.data.extensions[key] = clone(value);
     }
     if (ch.json_data) {
       const json = JSON.parse(ch.json_data); json.data ||= {}; json.data.extensions ||= {};

@@ -103,7 +103,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     add(total > 1 ? `复制 · ${total} 条` : '复制', () => quick.transfer(quickSources, 'copy', false, trigger));
     add(total > 1 ? `复制到… · ${total} 条` : '复制到…', () => quick.transfer(quickSources, 'copy', true, trigger));
     add(total > 1 ? `移动到… · ${total} 条` : '移动到…', () => quick.transfer(quickSources, 'move', true, trigger));
-    if (groupingEnabled()) add(quick.isRange(ref) ? '设为终点' : '分组', () => quick.group(ref, id, trigger));
+    if (groupingEnabled(kind)) add(quick.isRange(ref) ? '设为终点' : '分组', () => quick.group(ref, id, trigger));
     if (kind === 'regex' && originalRow.querySelector('.export_regex')) add('导出', original('.export_regex'));
     if (kind === 'preset') {
       if (originalRow.querySelector('[data-preset-prompt-action="favorite"]'))
