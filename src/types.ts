@@ -64,6 +64,7 @@ export interface WorkDocument {
   sources: GroupSource[];
   cleanup: Provider[];
   providerGroups?: Partial<Record<Provider, Group[]>>;
+  regexImport?: { ids: string[]; baibai: boolean; transferGroup?: string };
   dirty: boolean;
   legacyResolved?: boolean;
 }

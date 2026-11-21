@@ -237,3 +237,6 @@ body>.prw-entry-drag-preview{z-index:2147483646;background:var(--SmartThemeBlurT
 .prw-world-popup .prw-world-option[aria-selected="true"] { font-weight:bold; border-color:currentColor; }
 .prw-world-popup .prw-world-option small { flex-shrink:0; max-width:40%; overflow-wrap:anywhere; }
 .prw-world-popup .prw-world-option small:empty { display:none; }
+.prw-import-group:not([hidden]) { display:flex; align-items:center; gap:.5em; flex-wrap:wrap; margin-top:.4em; }
+.prw-import-group select { flex:1 1 9em; min-width:0; max-width:100%; }
+.prw-import-group[hidden] { display:none!important; }

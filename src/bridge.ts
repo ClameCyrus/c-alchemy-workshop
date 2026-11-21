@@ -9,6 +9,7 @@ import { installNativePresetDrag } from './native-preset-drag';
 import { installNativeGroupDrag } from './native-group-drag';
 import { nativeSurface } from './native-surface';
 import { presetTransitionBusy } from './native-preset-refresh';
+import { installRegexImport } from './native-regex-import';
 
 export function installNativeMenus(host: Host, open: (request: OpenRequest) => void, guard: (ref: Resource) => void = () => {}): () => void {
   let groups: ReturnType<typeof installNativeGroupViews> | undefined;
@@ -201,6 +202,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
     enable: (ref, id, enabled) => quick.groupEnabled(ref, id, enabled),
   });
   const operations = new QuickOperations(host, guard, refs => groups?.invalidate(refs));
+  const stopImport = installRegexImport(host, guard);
   const stopDrag = installNativeRegexDrag(row => currentRef(row, 'regex'),
     (ref, id, target) => operations.reorderRegex(ref, id, target.id, target.after, target.groupId), quick.fail);
   const stopPresetDrag = installNativePresetDrag(row => currentRef(row, 'preset'), guard,
@@ -244,6 +246,7 @@ export function installNativeMenus(host: Host, open: (request: OpenRequest) => v
   return () => {
     close();
     stopDrag();
+    stopImport();
     stopPresetDrag();
     stopGroupDrag();
     groups?.destroy();

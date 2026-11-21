@@ -2,6 +2,14 @@ import { clearLegacyField, clone, globalGroups, legacyConflict, LEGACY_NS, makeD
 import type { Host, Kind, Raw, Resource, Snapshot, WorkDocument } from './types';
 import { assertPresetReady } from './native-preset-refresh';
 import { readLibrary, type EntryLibraryData } from './library';
+import { appendTransferMembers } from './regex-import';
+
+const transferStorage = 'preset-transfer-regex-script-groupings-v2';
+function transferStore(settings: Raw) {
+  if (settings.presetTransfer?.regexScriptGroupings != null) return settings.presetTransfer.regexScriptGroupings;
+  try { return JSON.parse(localStorage.getItem(transferStorage) || 'null') ?? undefined; }
+  catch { return undefined; }
+}
 
 const ctx = () => {
   const c = window.SillyTavern?.getContext?.();
@@ -321,7 +329,7 @@ export class NativeHost implements Host {
       baibai:
         (ref.scope === 'preset' ? ext.baibaiToolkit?.regexGroups : undefined) ??
         settings.baiBaiToolkit?.regexListGroups?.scopes?.[regexKey(ref)],
-      transfer: settings.presetTransfer?.regexScriptGroupings,
+      transfer: transferStore(settings),
     });
   }
   private validateActive(doc: WorkDocument) {
@@ -352,6 +360,8 @@ export class NativeHost implements Host {
       throw new Error(`“${ref.label}”有未保存修改，请选择“使用中”版本`);
   }
   private validateCompatibility(doc: WorkDocument) {
+    // Grouped imports only append freshly allocated IDs to the selected record.
+    if (doc.regexImport) return;
     if (
       doc.ref.kind !== 'regex' ||
       doc.ref.scope === 'global' ||
@@ -371,7 +381,7 @@ export class NativeHost implements Host {
     if (others.some((rows: Raw[]) => rows.some(r => ids.has(String(r.id)))))
       throw new Error('其他资源也在使用相同的正则ID，无法单独写回或清理转移工具分组。请取消这项，工坊分组仍可保存。');
   }
-  private async persist(ref: Resource, snapshot: Snapshot, doc?: WorkDocument, restore = false) {
+  private async persist(ref: Resource, snapshot: Snapshot, doc?: WorkDocument, restore = false, rollbackImport?: WorkDocument['regexImport']) {
     const c = ctx(),
       settings = c.extensionSettings;
     if (ref.kind === 'preset' || ref.scope === 'preset') {
@@ -396,23 +406,21 @@ export class NativeHost implements Host {
           if (ref.kind === 'regex' && stable(live.extensions.regex_scripts) !== stable(snapshot.raw)) live.extensions.regex_scripts = clone(snapshot.raw);
           groupFields(live.extensions, snapshot, ref.kind, restore);
         } else if (!restore) throw new Error('预设已切换，保存已停止并将恢复');
-        const module = await this.moduleLoader('/script.js');
-        await module.saveSettings();
-        return;
-      }
-      const m = getManager(),
-        raw = clone(presetRaw(ref));
-      if (ref.kind === 'preset') {
-        raw.prompts = clone(snapshot.raw.prompts);
-        raw.prompt_order = clone(snapshot.raw.prompt_order);
-      }
-      const ext = (raw.extensions ||= {});
-      if (ref.kind === 'regex') ext.regex_scripts = clone(snapshot.raw);
-      groupFields(ext, snapshot, ref.kind, restore);
-      if (ref.live) {
-        const target = presetRaw(ref);
-        for (const key of ['prompts', 'prompt_order', 'extensions']) target[key] = clone(raw[key]);
+        if (ref.kind === 'preset') {
+          const module = await this.moduleLoader('/script.js');
+          await module.saveSettings();
+          return;
+        }
       } else {
+        const m = getManager(),
+          raw = clone(presetRaw(ref));
+        if (ref.kind === 'preset') {
+          raw.prompts = clone(snapshot.raw.prompts);
+          raw.prompt_order = clone(snapshot.raw.prompt_order);
+        }
+        const ext = (raw.extensions ||= {});
+        if (ref.kind === 'regex') ext.regex_scripts = clone(snapshot.raw);
+        groupFields(ext, snapshot, ref.kind, restore);
         await m.savePreset(ref.name, raw, { skipUpdate: true });
         assignObject(m.getCompletionPresetByName(ref.name), raw);
         if (m.getSelectedPresetName() === ref.name) {
@@ -457,26 +465,30 @@ export class NativeHost implements Host {
     if (ref.kind === 'regex') {
       // Never replace the whole shared transfer store with a stale per-document copy.
       const key = regexKey(ref);
-      if (snapshot.baibai !== undefined) {
-        settings.baiBaiToolkit ||= {};
-        settings.baiBaiToolkit.regexListGroups ||= { scopes: {} };
-        settings.baiBaiToolkit.regexListGroups.scopes ||= {};
-        settings.baiBaiToolkit.regexListGroups.scopes[key] = clone(snapshot.baibai);
-      } else if (settings.baiBaiToolkit?.regexListGroups?.scopes)
-        delete settings.baiBaiToolkit.regexListGroups.scopes[key];
+      const importing = doc?.regexImport ?? rollbackImport;
+      if (!importing || importing.baibai) {
+        if (snapshot.baibai !== undefined) {
+          settings.baiBaiToolkit ||= {};
+          settings.baiBaiToolkit.regexListGroups ||= { scopes: {} };
+          settings.baiBaiToolkit.regexListGroups.scopes ||= {};
+          settings.baiBaiToolkit.regexListGroups.scopes[key] = clone(snapshot.baibai);
+        } else if (settings.baiBaiToolkit?.regexListGroups?.scopes)
+          delete settings.baiBaiToolkit.regexListGroups.scopes[key];
+      }
       const touchesTransfer =
         !!doc &&
-        (doc.providerGroups?.transfer !== undefined || doc.cleanup.includes('transfer') ||
-          (doc.state.sync.includes('transfer') && !doc.state.suppressed.includes('transfer')));
-      if (touchesTransfer || (!doc && snapshot.transfer !== undefined)) {
+        (doc.regexImport ? !!doc.regexImport.transferGroup : doc.providerGroups?.transfer !== undefined ||
+          doc.cleanup.includes('transfer') || (doc.state.sync.includes('transfer') && !doc.state.suppressed.includes('transfer')));
+      if (touchesTransfer || (!doc && snapshot.transfer !== undefined && (!rollbackImport || rollbackImport.transferGroup))) {
         settings.presetTransfer ||= {};
         const transferDoc = doc?.providerGroups?.transfer
           ? { ...doc, state: { ...doc.state, groups: doc.providerGroups.transfer } } : doc;
-        const value = transferDoc
-          ? transformTransfer(transferDoc, settings.presetTransfer.regexScriptGroupings, transferDoc.cleanup.includes('transfer'))
-          : snapshot.transfer;
+        const current = transferStore(settings);
+        const value = doc?.regexImport?.transferGroup
+          ? appendTransferMembers(current, ref.scope, doc.regexImport.transferGroup, doc.regexImport.ids)
+          : transferDoc ? transformTransfer(transferDoc, current, transferDoc.cleanup.includes('transfer')) : snapshot.transfer;
         settings.presetTransfer.regexScriptGroupings = clone(value);
-        localStorage.setItem('preset-transfer-regex-script-groupings-v2', JSON.stringify(value));
+        localStorage.setItem(transferStorage, JSON.stringify(value));
       }
     }
     const module = await this.moduleLoader('/script.js');
@@ -505,7 +517,7 @@ export class NativeHost implements Host {
       const failed: string[] = [];
       for (const item of attempted.reverse()) {
         try {
-          await this.persist(item.doc.ref, before.get(item.doc.ref.key)!, undefined, true);
+          await this.persist(item.doc.ref, before.get(item.doc.ref.key)!, undefined, true, item.doc.regexImport);
         } catch {
           failed.push(item.doc.ref.label);
         }
