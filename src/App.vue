@@ -1342,6 +1342,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="settings-group">
             <strong>原生界面优化</strong>
+            <label class="compact-check"><input v-model="state.preferences.directRecentChat" type="checkbox" />直接打开最近的角色聊天</label>
             <label class="compact-check"><input v-model="state.preferences.presetSwitch" type="checkbox" />优化预设切换并保护保存</label>
             <label class="compact-check"><input v-model="state.preferences.presetRefresh" type="checkbox" />优化原生条目刷新与拖动</label>
             <label class="compact-check"><input v-model="state.preferences.regexImportGroup" type="checkbox" />导入正则时选择分组</label>

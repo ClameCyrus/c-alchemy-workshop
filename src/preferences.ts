@@ -17,6 +17,7 @@ const Preferences = z.object({
   presetLock: z.boolean().default(false),
   presetSwitch: z.boolean().default(false),
   presetRefresh: z.boolean().default(false),
+  directRecentChat: z.boolean().default(false),
   worldbookPicker: z.boolean().default(false),
   showEmptySets: z.boolean().default(false),
   kind: z.enum(['preset', 'regex']).default('preset'),

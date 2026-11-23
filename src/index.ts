@@ -10,6 +10,7 @@ import { installPresetLock } from './preset-lock';
 import { installNativePresetRefresh } from './native-preset-refresh';
 import { installWorldbookPicker } from './worldbook-picker';
 import { installRegexRefresh } from './native-regex-refresh';
+import { installNativeRecentChat } from './native-recent-chat';
 import { VERSION } from './version';
 import type { Host, OpenRequest } from './types';
 
@@ -28,6 +29,7 @@ function init() {
   const stopPresetRefresh = host.demo ? () => {} : installNativePresetRefresh();
   const stopWorldbookPicker = installWorldbookPicker(host);
   const stopRegexRefresh = installRegexRefresh();
+  const stopRecentChat = installNativeRecentChat(() => useWorkbench(pinia).preferences.directRecentChat);
   const buttons: HTMLElement[] = [];
   const wand = document.querySelector('#extensionsMenu');
   if (wand) {
@@ -87,6 +89,7 @@ function init() {
     stopPresetRefresh();
     stopWorldbookPicker();
     stopRegexRefresh();
+    stopRecentChat();
     cleanMenus();
     app.unmount();
     mount.remove();
