@@ -29,7 +29,7 @@ function init() {
   const stopPresetRefresh = host.demo ? () => {} : installNativePresetRefresh();
   const stopWorldbookPicker = installWorldbookPicker(host);
   const stopRegexRefresh = installRegexRefresh();
-  const stopRecentChat = installNativeRecentChat(() => useWorkbench(pinia).preferences.directRecentChat);
+  const recentChat = installNativeRecentChat(() => useWorkbench(pinia).preferences.directRecentChat);
   const buttons: HTMLElement[] = [];
   const wand = document.querySelector('#extensionsMenu');
   if (wand) {
@@ -89,7 +89,7 @@ function init() {
     stopPresetRefresh();
     stopWorldbookPicker();
     stopRegexRefresh();
-    stopRecentChat();
+    recentChat.stop();
     cleanMenus();
     app.unmount();
     mount.remove();
@@ -97,7 +97,7 @@ function init() {
     window.removeEventListener('pagehide', destroy);
     delete window.__PRW__;
   };
-  window.__PRW__ = { open, destroy };
+  window.__PRW__ = { open, destroy, openRecentCharacterChat: recentChat.openRecentCharacterChat };
   window.addEventListener('pagehide', destroy);
   if (host.demo) open();
   console.info(`[Cの炼金工坊] ${VERSION} 已加载`);
