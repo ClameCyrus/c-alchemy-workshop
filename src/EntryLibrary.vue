@@ -15,6 +15,7 @@ const query = ref(''), folder = ref(''), selected = ref<string[]>([]), stage = r
 const category = ref<{ mode: 'add' | 'rename' | 'move'; old: string; name: string } | null>(null), folds = computed(() => props.folds);
 const books = ref<string[]>([]), bookQuery = ref(''), worldName = ref(''), world = ref<Raw | null>(null), worldIds = ref<string[]>([]), worldQuery = ref(''), worldOpen = ref(false), worldBusy = ref(false);
 const root = ref<HTMLElement>(), file = ref<HTMLInputElement>();
+const toolsExpanded = ref(false);
 const previousFocus = document.activeElement as HTMLElement | null;
 let request = 0, stopped = false;
 const folders = computed(() => data.value.folders);
@@ -181,7 +182,18 @@ onBeforeUnmount(() => { stopped = true; request++; window.removeEventListener('b
         <footer><button @click="worldOpen = false; request++; worldBusy = false">返回</button><button class="primary" :disabled="!world || !worldIds.length || worldBusy" @click="collectWorld">收藏 · {{ worldIds.length }}</button></footer>
       </template>
       <template v-else>
-        <nav class="library-fields"><button :disabled="loading || saving" @click="create()">新建条目</button><button :disabled="loading || saving" @click="category = {mode:'add',old:'',name:''}">新建分类</button><button :disabled="loading || saving" @click="openWorlds">收藏世界书</button><button :disabled="loading || saving" @click="file?.click()">导入</button><button :disabled="loading || !baseline" @click="download">导出</button><button :disabled="saving" @click="load">重新载入</button><input ref="file" type="file" accept="application/json,.json" hidden @change="importFile" /></nav>
+        <nav class="library-fields">
+          <button :disabled="loading || saving" @click="create()">新建条目</button>
+          <button :disabled="loading || saving" @click="category = {mode:'add',old:'',name:''}">新建分类</button>
+          <button :disabled="loading || saving" @click="openWorlds">收藏世界书</button>
+          <button :class="{ active: toolsExpanded }" :aria-expanded="toolsExpanded" aria-controls="prw-library-tools" @click="toolsExpanded = !toolsExpanded">工具</button>
+        </nav>
+        <div v-show="toolsExpanded" id="prw-library-tools" class="library-fields">
+          <button :disabled="loading || saving" @click="file?.click()">导入</button>
+          <button :disabled="loading || !baseline" @click="download">导出</button>
+          <button :disabled="saving" @click="load">重新载入</button>
+          <input ref="file" type="file" accept="application/json,.json" hidden @change="importFile" />
+        </div>
         <div class="library-fields"><input v-model="query" type="search" placeholder="搜索条目" aria-label="搜索条目" /><select v-model="folder" aria-label="条目分类筛选"><option value="">所有分类</option><option value="__none">未分类</option><option v-for="f in folders" :key="f" :value="f">{{ f }}</option></select><button @click="toggle(list.map(i => i.id))">全选</button></div>
         <div class="library-scroll">
           <p v-if="loading">读取中…</p><p v-else-if="!sections.length">没有找到条目</p>

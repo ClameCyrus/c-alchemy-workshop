@@ -57,6 +57,7 @@ const grouping = computed(() => kind.value === 'regex' ? state.preferences.regex
 const view = computed(() => state.preferences.views[kind.value]);
 const opened = ref(false), appearanceDialog = ref(false), threshold = ref(0.5);
 const toolsExpanded = ref(false);
+const settingsExpanded = ref({ features: false, native: false, appearance: false });
 const variableKey = ref('');
 const variableDocument = computed(() => state.documents[variableKey.value]);
 const editorArea = ref<HTMLTextAreaElement>();
@@ -174,9 +175,11 @@ function clearComparison() {
 }
 const savedScroll: Record<string, number> = {};
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+const resourcePlaceholder = computed(() => kind.value === 'regex' ? '选择范围' : '选择预设');
+const resourceNames = computed(() => new Map(resources.value.map(resource => [resource.key, resource.label])));
 const sideNames = computed(() => ({
-  left: docs.value.left?.ref.label || '选择预设',
-  right: docs.value.right?.ref.label || '选择预设',
+  left: resourceNames.value.get(keys.value.left) || resourcePlaceholder.value,
+  right: resourceNames.value.get(keys.value.right) || resourcePlaceholder.value,
 }));
 const anchorDoc = computed(() => (anchor.value && [keys.value.left, keys.value.right].includes(anchor.value.key) ? state.documents[anchor.value.key] : undefined));
 const anchorEntry = computed(
@@ -871,7 +874,7 @@ onBeforeUnmount(() => {
         </div>
         <button :class="{ active: dual }" @click="dual = !dual">对比</button>
         <button @click="openEntryLibrary()">条目库</button>
-        <button class="mobile-tools" :aria-expanded="toolsExpanded" @click="toolsExpanded = !toolsExpanded">工具</button>
+        <button :class="{ active: toolsExpanded }" :aria-expanded="toolsExpanded" @click="toolsExpanded = !toolsExpanded">工具</button>
         <select v-model="operation" class="extra-tool" aria-label="操作模式">
           <option value="browse">浏览</option>
           <option value="insert">插入 / 拖动</option>
@@ -946,16 +949,23 @@ onBeforeUnmount(() => {
           :class="{ 'mobile-hidden': dual && activePage !== side }"
         >
           <div class="resource-bar">
-            <select
-              :value="keys[side]"
-              :aria-label="side === 'left' ? '来源' : '目标'"
-              @change="pick(side, ($event.target as HTMLSelectElement).value)"
-            >
-              <option value="">选择{{ kind === 'regex' ? '范围' : '预设' }}</option>
-              <option v-for="r in resources" :key="r.key" :value="r.key">{{ r.label }}</option></select
-            ><button v-if="docs[side]" class="extra-tool" aria-label="重新载入" title="重新载入" @click="reload(docs[side])">↻</button
-            ><button v-if="grouping && docs[side]" class="extra-tool" aria-label="分组方案" title="分组方案" @click="openGroups(docs[side])">▤</button
-            ><button v-if="docs[side]" class="extra-tool" aria-label="导出备份" title="导出备份" @click="download(docs[side])">⇩</button>
+            <div class="resource-picker">
+              <span class="resource-name" aria-hidden="true">{{ sideNames[side] }}</span>
+              <span class="disclosure-arrow" aria-hidden="true"></span>
+              <select
+                :value="keys[side]"
+                :aria-label="side === 'left' ? '来源' : '目标'"
+                @change="pick(side, ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ resourcePlaceholder }}</option>
+                <option v-for="r in resources" :key="r.key" :value="r.key">{{ r.label }}</option>
+              </select>
+            </div>
+            <div v-if="docs[side]" class="resource-actions extra-tool">
+              <button @click="reload(docs[side])">重新载入</button>
+              <button v-if="grouping" @click="openGroups(docs[side])">分组方案</button>
+              <button @click="download(docs[side])">导出备份</button>
+            </div>
           </div>
           <template v-if="docs[side]">
             <div class="search-bar">
@@ -977,7 +987,7 @@ onBeforeUnmount(() => {
                 >{{ lists[side].length }} 条<span v-if="selected[docs[side].ref.key]?.length">
                   · 已选 {{ selected[docs[side].ref.key].length }}</span
                 ></small
-              ><small v-if="filter !== 'all' || (grouping && groupFilter[side]) || includeUnused" class="mobile-tools">筛选中</small
+              ><small v-if="!toolsExpanded && (filter !== 'all' || (grouping && groupFilter[side]) || (kind === 'preset' && includeUnused))">筛选中</small
               ><span class="spacer"></span
               ><PresetTokens v-if="kind === 'preset' && host.countTokens" :key="docs[side].ref.key"
                 :doc="docs[side]" :host="host" :grouping="state.preferences.presetGrouping" />
@@ -1334,31 +1344,38 @@ onBeforeUnmount(() => {
       <div v-if="appearanceDialog" class="dialog-shade" @pointerdown.capture="backdropDown" @click.self="backdropClose($event, () => appearanceDialog = false)">
         <section class="appearance-dialog">
           <header><strong>设置</strong><button aria-label="关闭外观" @click="appearanceDialog = false">✕</button></header>
-          <div class="settings-group">
-            <strong>工坊功能</strong>
-            <label class="compact-check"><input v-model="state.preferences.presetGrouping" type="checkbox" />启用预设分组</label>
-            <label class="compact-check"><input v-model="state.preferences.regexGrouping" type="checkbox" />启用正则分组</label>
-            <label class="compact-check"><input v-model="state.preferences.presetLock" type="checkbox" />启用预设条目锁</label>
-          </div>
-          <div class="settings-group">
-            <strong>原生界面优化</strong>
-            <label class="compact-check"><input v-model="state.preferences.directRecentChat" type="checkbox" />直接打开最近的角色聊天</label>
-            <label class="compact-check"><input v-model="state.preferences.presetSwitch" type="checkbox" />优化预设切换并保护保存</label>
-            <label class="compact-check"><input v-model="state.preferences.presetRefresh" type="checkbox" />优化原生条目刷新与拖动</label>
-            <label class="compact-check"><input v-model="state.preferences.regexImportGroup" type="checkbox" />导入正则时选择分组</label>
-            <label class="compact-check"><input v-model="state.preferences.regexDeferredRefresh" type="checkbox" />关闭正则面板后统一刷新</label>
-            <label class="compact-check"><input v-model="state.preferences.worldbookPicker" type="checkbox" />优化世界书选择</label>
-          </div>
-          <div class="settings-group">
-            <label class="appearance-mode">外观<select v-model="state.preferences.appearance.mode" aria-label="配色方式">
-              <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
-            </select></label>
-            <div v-if="state.preferences.appearance.mode === 'custom'" class="palette-grid">
-              <label v-for="item in [{key:'background',label:'背景'},{key:'text',label:'文字'},{key:'muted',label:'次要文字'},{key:'accent',label:'强调'},{key:'border',label:'边框'}] as const" :key="item.key">
-                {{ item.label }}<input v-model="state.preferences.appearance[item.key]" type="color" :aria-label="item.label + '颜色'" />
-              </label>
+          <details class="settings-group" :open="settingsExpanded.features" @toggle="settingsExpanded.features = ($event.target as HTMLDetailsElement).open">
+            <summary><strong>工坊功能</strong><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+            <div class="settings-fields">
+              <label class="compact-check"><input v-model="state.preferences.presetGrouping" type="checkbox" />启用预设分组</label>
+              <label class="compact-check"><input v-model="state.preferences.regexGrouping" type="checkbox" />启用正则分组</label>
+              <label class="compact-check"><input v-model="state.preferences.presetLock" type="checkbox" />启用预设条目锁</label>
             </div>
-          </div>
+          </details>
+          <details class="settings-group" :open="settingsExpanded.native" @toggle="settingsExpanded.native = ($event.target as HTMLDetailsElement).open">
+            <summary><strong>原生界面优化</strong><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+            <div class="settings-fields">
+              <label class="compact-check"><input v-model="state.preferences.directRecentChat" type="checkbox" />直接打开最近的角色聊天</label>
+              <label class="compact-check"><input v-model="state.preferences.presetSwitch" type="checkbox" />优化预设切换并保护保存</label>
+              <label class="compact-check"><input v-model="state.preferences.presetRefresh" type="checkbox" />优化原生条目刷新与拖动</label>
+              <label class="compact-check"><input v-model="state.preferences.regexImportGroup" type="checkbox" />导入正则时选择分组</label>
+              <label class="compact-check"><input v-model="state.preferences.regexDeferredRefresh" type="checkbox" />关闭正则面板后统一刷新</label>
+              <label class="compact-check"><input v-model="state.preferences.worldbookPicker" type="checkbox" />优化世界书选择</label>
+            </div>
+          </details>
+          <details class="settings-group" :open="settingsExpanded.appearance" @toggle="settingsExpanded.appearance = ($event.target as HTMLDetailsElement).open">
+            <summary><strong>外观</strong><span class="disclosure-arrow" aria-hidden="true"></span></summary>
+            <div class="settings-fields">
+              <label class="appearance-mode">配色方式<select v-model="state.preferences.appearance.mode" aria-label="配色方式">
+                <option value="theme">跟随酒馆</option><option value="custom">自定义</option>
+              </select></label>
+              <div v-if="state.preferences.appearance.mode === 'custom'" class="palette-grid">
+                <label v-for="item in [{key:'background',label:'背景'},{key:'text',label:'文字'},{key:'muted',label:'次要文字'},{key:'accent',label:'强调'},{key:'border',label:'边框'}] as const" :key="item.key">
+                  {{ item.label }}<input v-model="state.preferences.appearance[item.key]" type="color" :aria-label="item.label + '颜色'" />
+                </label>
+              </div>
+            </div>
+          </details>
         </section>
       </div>
       <div v-if="confirmBox" class="dialog-shade confirm-shade">
@@ -1487,7 +1504,6 @@ onBeforeUnmount(() => {
 }
 .prw-header,
 .prw-toolbar,
-.resource-bar,
 .search-bar,
 .list-toolbar,
 .prw-footer,
@@ -1627,13 +1643,75 @@ onBeforeUnmount(() => {
 .prw-column + .prw-column {
   border-left: 1px solid var(--prw-border);
 }
+@supports (grid-template-rows: subgrid) {
+  @media (width > 760px) {
+    .prw-columns:not(.single) {
+      grid-template-rows: [resources] auto [search] auto [toolbar] auto [group-notice] auto [entries] minmax(0, 1fr);
+    }
+    .prw-columns:not(.single) > .prw-column {
+      display: grid;
+      grid-row: 1 / -1;
+      grid-template-rows: subgrid;
+    }
+    .prw-columns:not(.single) .resource-bar { grid-row: resources; }
+    .prw-columns:not(.single) .search-bar { grid-row: search; }
+    .prw-columns:not(.single) .list-toolbar { grid-row: toolbar; }
+    .prw-columns:not(.single) .group-notice { grid-row: group-notice; }
+    .prw-columns:not(.single) :is(.entry-list, .prw-column > .empty-state) { grid-row: entries; }
+  }
+}
 .resource-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(36px, 1fr);
+  gap: 8px;
   padding: 14px 16px 8px;
 }
-.resource-bar select {
-  flex: 1;
+.resource-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--prw-border);
+  border-radius: 7px;
+  background: var(--prw-surface);
+  color: var(--prw-text);
+}
+.resource-picker:has(> select:focus-visible) {
+  outline: 2px solid var(--prw-accent);
+  outline-offset: 2px;
+}
+.resource-name {
+  min-width: 0;
+  line-height: 1.35;
   font-weight: 600;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.disclosure-arrow {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 0 1px 1px 0;
+  transform: translateY(-2px) rotate(45deg);
+}
+#prw-panel .resource-picker > select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.resource-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .search-bar {
   padding: 0 16px 8px;
@@ -2165,8 +2243,10 @@ onBeforeUnmount(() => {
   .resource-bar {
     padding: 9px 10px 7px;
     gap: 5px;
+    grid-template-rows: minmax(33px, 1fr);
   }
-  .resource-bar select {
+  .resource-picker {
+    min-height: 33px;
     font-size: 12px;
   }
   .resource-bar button {
@@ -2266,21 +2346,41 @@ onBeforeUnmount(() => {
 
 .appearance-dialog{width:min(340px,100%);padding:16px;background:var(--prw-bg);border:1px solid var(--prw-border);border-radius:12px;display:grid;gap:14px}.appearance-dialog header{display:flex;align-items:center;justify-content:space-between}.palette-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.palette-grid label{display:flex;align-items:center;justify-content:space-between;gap:8px}.palette-grid input[type=color]{width:38px;height:32px;padding:2px}
 #prw-panel .appearance-dialog { max-height:100%; overflow:auto; }
-.settings-group { display:grid; gap:8px; padding-top:10px; border-top:1px solid var(--prw-border); }
+.settings-group {
+  border-top: 1px solid var(--prw-border);
+}
+.settings-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 3px 0 0;
+  color: var(--prw-text);
+  list-style: none;
+  cursor: pointer;
+}
+.settings-group > summary::-webkit-details-marker { display: none; }
+.settings-group > summary:focus-visible { outline: 2px solid var(--prw-accent); }
+.settings-group[open] > summary .disclosure-arrow { transform: translateY(2px) rotate(225deg); }
+.settings-fields {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+.settings-fields .compact-check { white-space: normal; }
 .appearance-mode { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .appearance-mode select { width:auto; }
-#prw-panel .mobile-tools { display:none; }
+#prw-panel .prw-window:not(.tools-expanded) .extra-tool { display:none; }
 #prw-panel .move-status { font-weight:700; color:var(--prw-accent); }
 #prw-panel .preset-tokens { white-space:nowrap; font-variant-numeric:tabular-nums; }
 #prw-panel .entry-top .row-edit { min-width:29px; min-height:29px; flex-shrink:0; }
 @media(max-width:760px) {
-  #prw-panel .mobile-tools { display:inline-flex; align-items:center; }
-  #prw-panel .prw-window:not(.tools-expanded) .extra-tool { display:none; }
   #prw-panel .prw-toolbar { padding-block:4px; }
   #prw-panel .prw-toolbar > button, #prw-panel .prw-toolbar > .segmented { height:31px; }
   #prw-panel .prw-toolbar button { padding-inline:7px; white-space:nowrap; }
   #prw-panel .resource-bar { padding-block:5px; }
-  #prw-panel .resource-bar > select, #prw-panel .search-bar > input { height:33px; }
+  #prw-panel .search-bar > input { height:33px; }
   #prw-panel .list-toolbar { flex-wrap:wrap; }
 }
 .mobile-history{display:none}
@@ -2290,7 +2390,7 @@ onBeforeUnmount(() => {
 </style>
 
 <style scoped>
-.prw-toolbar>button,.prw-toolbar>select,.resource-bar>button,.resource-bar>select,.search-bar>input,.search-bar>select{height:36px;box-sizing:border-box;margin:0;align-self:center}
+.prw-toolbar>button,.prw-toolbar>select,.search-bar>input,.search-bar>select{height:36px;box-sizing:border-box;margin:0;align-self:center}
 .prw-toolbar>.segmented{height:36px;box-sizing:border-box;align-items:stretch}.prw-toolbar>.segmented button{margin:0;display:flex;align-items:center}
 .prw-toolbar>select{width:auto;max-width:min(360px,100%)}
 .entry.can-drag{cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:pan-y}.entry.entry-dragging{cursor:grabbing;opacity:.6}.entry{position:relative}
