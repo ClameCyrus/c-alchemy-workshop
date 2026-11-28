@@ -2,6 +2,7 @@ import { readPreferences } from './preferences';
 import type { Host } from './types';
 
 type WorldbookSources = Record<string, string[]>;
+let nextPickerId = 0;
 
 function button(label: string, action: () => void, className = '') {
   const result = document.createElement('button');
@@ -12,7 +13,7 @@ function button(label: string, action: () => void, className = '') {
   return result;
 }
 
-function connect(select: HTMLSelectElement, title: string, sources: () => WorldbookSources, inspect: (name: string) => void) {
+function connect(select: HTMLSelectElement, title: string, sources: () => WorldbookSources, inspect?: (name: string) => void) {
   const jq = (window as any).jQuery;
   const root = document.createElement('div');
   root.className = 'prw-world-picker';
@@ -22,6 +23,9 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   popup.className = 'prw-world-popup';
   popup.hidden = true;
   const supportsPopover = typeof popup.showPopover === 'function';
+  const dialog = select.closest('dialog');
+  const inline = !!dialog && !supportsPopover;
+  if (inline) popup.classList.add('prw-world-popup-inline');
   if (supportsPopover) popup.setAttribute('popover', 'manual');
   const viewport = window.visualViewport;
   const toolbar = document.createElement('div');
@@ -37,7 +41,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     search.focus({ preventScroll: true });
   });
   const list = document.createElement('div');
-  list.id = 'prw-world-options-' + select.id;
+  list.id = 'prw-world-options-' + (select.id || `binding-${++nextPickerId}`);
   list.setAttribute('role', 'listbox');
   list.setAttribute('aria-label', title);
   if (select.multiple) list.setAttribute('aria-multiselectable', 'true');
@@ -50,7 +54,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   toolbar.append(searchButton, search, button('收起', () => close(true)));
   popup.append(toolbar, list);
   root.append(summary, toggle);
-  (supportsPopover ? root : document.body).append(popup);
+  (supportsPopover || inline ? root : document.body).append(popup);
   select.classList.add('prw-world-picker-native');
   const adjacent = select.nextElementSibling;
   (adjacent?.classList.contains('select2-container') ? adjacent : select).after(root);
@@ -93,7 +97,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   }
   function close(focus = false) {
     if (popup.hidden) return;
-    if (supportsPopover) popup.hidePopover();
+    if (supportsPopover && popup.matches(':popover-open')) popup.hidePopover();
     popup.hidden = true;
     search.hidden = true;
     searchButton.hidden = false;
@@ -109,16 +113,18 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     if (focus) toggle.focus({ preventScroll: true });
   }
   function open() {
+    if (!popup.hidden) return;
     document.dispatchEvent(new CustomEvent('prw:world-picker-open', { detail: root }));
     popup.hidden = false;
     toggle.setAttribute('aria-expanded', 'true');
     render();
     list.scrollTop = 0;
     if (supportsPopover) popup.showPopover({ source: toggle });
+    if (inline) return;
     position();
     if (popup.hidden) return;
     resizeObserver.observe(toggle);
-    const drawer = root.closest('#WorldInfo');
+    const drawer = dialog || root.closest('#WorldInfo');
     if (drawer) resizeObserver.observe(drawer);
     window.addEventListener('resize', schedulePosition);
     window.addEventListener('scroll', onScroll, true);
@@ -126,7 +132,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     viewport?.addEventListener('scroll', schedulePosition);
   }
   function pick(option: HTMLOptionElement) {
-    const selected = [...select.selectedOptions].map(value => value.value);
+    const selected = [...select.selectedOptions].map(value => value.value).filter(Boolean);
     const values = select.multiple
       ? (option.selected ? selected.filter(value => value !== option.value) : [...selected, option.value])
       : [option.value];
@@ -140,11 +146,12 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     summary.replaceChildren();
     if (select.multiple) {
       for (const option of selected.slice(0, 3)) {
-        summary.append(button(option.text, () => inspect(option.text), 'prw-world-chip'));
+        summary.append(button(option.text, () => inspect ? inspect(option.text) : open(), 'prw-world-chip'));
       }
-      toggle.textContent = selected.length > 3 ? `选择世界书 · 已启用 ${selected.length} 本` : '选择世界书';
+      const label = inspect ? '选择世界书' : title;
+      toggle.textContent = selected.length > 3 ? `${label} · ${inspect ? '已启用' : '已选'} ${selected.length} 本` : label;
     } else {
-      toggle.textContent = selected[0]?.text || '选择世界书查看条目';
+      toggle.textContent = selected[0]?.text || title;
     }
     toggle.title = toggle.textContent;
     toggle.setAttribute('aria-label', title);
@@ -182,6 +189,8 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     focusOption?.focus({ preventScroll: true });
   }
   const update = () => render();
+  const onDialogClose = () => close();
+  dialog?.addEventListener('close', onDialogClose);
   const outside = (event: PointerEvent) => {
     const target = event.target as Node;
     if (!root.contains(target) && !popup.contains(target)) close();
@@ -189,7 +198,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
   const other = (event: Event) => { if ((event as CustomEvent).detail !== root) close(); };
   const onKey = (event: KeyboardEvent) => {
     if (popup.hidden) return;
-    if (event.key === 'Escape') { event.stopPropagation(); close(true); return; }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return; }
     if (event.key === 'Tab' && !event.shiftKey && event.target === toggle) {
       event.preventDefault();
       (search.hidden ? searchButton : search).focus({ preventScroll: true });
@@ -210,7 +219,7 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     options[next].focus();
   };
   root.addEventListener('keydown', onKey);
-  if (!supportsPopover) popup.addEventListener('keydown', onKey);
+  if (!root.contains(popup)) popup.addEventListener('keydown', onKey);
   search.addEventListener('input', () => { list.scrollTop = 0; render(); });
   document.addEventListener('pointerdown', outside, true);
   document.addEventListener('prw:world-picker-open', other);
@@ -225,12 +234,51 @@ function connect(select: HTMLSelectElement, title: string, sources: () => Worldb
     if (jq) jq(select).off('change.prwWorldPicker', update);
     else select.removeEventListener('change', update);
     observer.disconnect();
+    dialog?.removeEventListener('close', onDialogClose);
     document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('prw:world-picker-open', other);
     document.removeEventListener('prw:world-picker-sources', update);
     select.classList.remove('prw-world-picker-native');
     popup.remove();
     root.remove();
+  };
+}
+
+function watchBindingDialogs(sources: () => WorldbookSources) {
+  const bindings = [
+    { selector: 'select.character_world_info_selector', multiple: false, title: '选择主要世界书' },
+    { selector: 'select.character_extra_world_info_selector', multiple: true, title: '选择附加世界书' },
+    { selector: 'select.chat_world_info_selector', multiple: false, title: '选择聊天世界书' },
+  ];
+  const dialogs = new Map<HTMLDialogElement, (() => void)[]>();
+  function attach(dialog: HTMLDialogElement) {
+    if (dialogs.has(dialog)) return;
+    const cleanups = [];
+    for (const { selector, multiple, title } of bindings) {
+      const select = dialog.querySelector<HTMLSelectElement>(selector);
+      if (select?.multiple === multiple) cleanups.push(connect(select, title, sources));
+    }
+    if (cleanups.length) dialogs.set(dialog, cleanups);
+  }
+  // SillyTavern mounts a populated dialog directly under body for each binding session.
+  const observer = new MutationObserver(records => {
+    for (const record of records) {
+      for (const node of record.removedNodes) {
+        if (!(node instanceof HTMLDialogElement)) continue;
+        dialogs.get(node)?.forEach(cleanup => cleanup());
+        dialogs.delete(node);
+      }
+      for (const node of record.addedNodes) {
+        if (node instanceof HTMLDialogElement && node.isConnected) attach(node);
+      }
+    }
+  });
+  observer.observe(document.body, { childList: true });
+  document.querySelectorAll<HTMLDialogElement>('body > dialog').forEach(attach);
+  return () => {
+    observer.disconnect();
+    dialogs.forEach(cleanups => cleanups.forEach(cleanup => cleanup()));
+    dialogs.clear();
   };
 }
 
@@ -251,10 +299,12 @@ export function installWorldbookPicker(host: Host) {
     stop = [];
     generation++;
     if (!readPreferences().worldbookPicker) return;
+    const sources = () => active;
+    stop.push(watchBindingDialogs(sources));
     const global = document.querySelector<HTMLSelectElement>('#world_info');
     const editor = document.querySelector<HTMLSelectElement>('#world_editor_select');
-    if (!global?.multiple || !editor || editor.multiple) return;
     updateSources();
+    if (!global?.multiple || !editor || editor.multiple) return;
     const show = (name: string) => {
       const option = [...editor.options].find(option => option.value && option.text === name);
       if (!option || option.selected) return;
@@ -263,8 +313,7 @@ export function installWorldbookPicker(host: Host) {
       if (jq) jq(editor).trigger('change');
       else editor.dispatchEvent(new Event('change', { bubbles: true }));
     };
-    const sources = () => active;
-    stop = [connect(global, '全局启用世界书', sources, show), connect(editor, '选择世界书查看条目', sources, show)];
+    stop.push(connect(global, '全局启用世界书', sources, show), connect(editor, '选择世界书查看条目', sources, show));
   }
   const context = window.SillyTavern?.getContext?.();
   const chatChanged = context?.eventTypes?.CHAT_CHANGED;

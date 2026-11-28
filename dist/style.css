@@ -203,6 +203,7 @@ body>.prw-entry-drag-preview{z-index:2147483646;background:var(--SmartThemeBlurT
   background-image:linear-gradient(var(--SmartThemeBlurTintColor, #25242b), var(--SmartThemeBlurTintColor, #25242b));
 }
 .prw-world-popup-above { transform:translateY(-100%); }
+.prw-world-popup.prw-world-popup-inline { position:static; max-height:40vh; max-height:40dvh; }
 .prw-world-popup .prw-world-toolbar { display:flex; flex:none; align-items:center; gap:5px; }
 .prw-world-popup .prw-world-toolbar input {
   flex:1;
