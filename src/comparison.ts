@@ -1,9 +1,9 @@
 import { onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { settingsOf, stable } from './core';
-import type { Entry, Match, WorkDocument } from './types';
+import type { Entry, Match, Side, WorkDocument } from './types';
 
 interface Input {
-  left?: WorkDocument; right?: WorkDocument; anchor?: Entry; anchorKey?: string;
+  left?: WorkDocument; right?: WorkDocument; anchor?: Entry; anchorSide?: Side;
   unused: boolean; filter: string; enabled: boolean; threshold: number;
 }
 const entries = (doc: WorkDocument | undefined, unused: boolean) =>
@@ -50,7 +50,7 @@ export function useComparison(read: () => Input, signature: (entry: Entry) => st
     await pause();
     if (job !== version) return;
     if (input.anchor) {
-      const candidates = input.anchorKey === input.left?.ref.key ? right : left;
+      const candidates = input.anchorSide === 'left' ? right : left;
       for (const candidate of candidates) {
         const match = compare(input.anchor, candidate);
         if (match) relationResult.set(candidate.id, match);

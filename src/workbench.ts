@@ -29,7 +29,7 @@ export const useWorkbench = defineStore('c-alchemy-workshop', () => {
   const keys = reactive({ left: preferences.views[kind.value].left, right: preferences.views[kind.value].right });
   const resources = ref<Resource[]>([]);
   const selected = reactive<Record<string, string[]>>({});
-  const anchor = ref<{ key: string; id: string } | null>(null);
+  const anchor = ref<{ side: Side; key: string; id: string } | null>(null);
   const operation = ref<'browse' | 'insert'>(preferences.operation);
   const transferAction = ref<'copy' | 'move'>(preferences.transfer);
   const activePage = ref<Side>(preferences.page);

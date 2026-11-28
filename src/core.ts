@@ -491,6 +491,9 @@ export function settingsOf(e: Entry): Raw {
   return {
     enabled: e.enabled,
     role: e.role,
+    systemPrompt: !!r.system_prompt,
+    marker: !!r.marker,
+    listed: !e.unused,
     position: r.injection_position,
     depth: r.injection_depth,
     order: r.injection_order,

@@ -20,6 +20,7 @@ import {
 import { useWorkbench } from './workbench';
 import { applyAppearance } from './preferences';
 import { useComparison } from './comparison';
+import { compareLists, differenceFilters, matchesOverview } from './comparison-overview';
 import TextCompare from './TextCompare.vue';
 import { browseRows } from './browse-rows';
 import { installEntryDrag } from './entry-drag';
@@ -68,11 +69,20 @@ watch(opened, async value => {
   if (opened.value && panel.value && !panel.value.open) panel.value.showModal();
 }, { flush: 'post' });
 const dual = computed({ get: () => view.value.dual, set: value => { view.value.dual = value; } });
-const filter = computed({ get: () => view.value.filter, set: value => { view.value.filter = value; } });
+const overviewEnabled = computed(() => dual.value && view.value.markDifferences && !!docs.value.left && !!docs.value.right);
+const filter = computed({
+  get: () => !overviewEnabled.value && Object.hasOwn(differenceFilters, view.value.filter) ? 'all' : view.value.filter,
+  set: value => { view.value.filter = value; },
+});
 const relationFilter = computed({ get: () => view.value.relation, set: value => { view.value.relation = value; } });
 const search = computed(() => view.value.search);
 const includeUnused = computed({ get: () => view.value.unused, set: value => { view.value.unused = value; } });
 const groupFilter = computed(() => view.value.groups);
+const overview = computed(() => {
+  if (!opened.value || !overviewEnabled.value) return;
+  const entries = (doc: WorkDocument) => includeUnused.value ? [...doc.entries, ...doc.unused] : doc.entries;
+  return compareLists(entries(docs.value.left!), entries(docs.value.right!));
+});
 watch(() => state.preferences.appearance, applyAppearance, { deep: true, immediate: true });
 const searchQuery = ref<Record<Side, string>>({ ...search.value });
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -173,6 +183,20 @@ const pickedEntries = computed(() => Object.fromEntries((['left', 'right'] as Si
 function clearComparison() {
   anchor.value = null; picked.value = { left: '', right: '' }; readerOpen.value = false;
 }
+function openDifference(side: Side, entry: Entry, peer: Entry) {
+  picked.value = side === 'left' ? { left: entry.id, right: peer.id } : { left: peer.id, right: entry.id };
+  readerPage.value = side;
+  readerOpen.value = true;
+}
+function closeReader() {
+  readerOpen.value = false;
+  if (!anchor.value) picked.value = { left: '', right: '' };
+}
+function chooseCounterpart() {
+  filter.value = 'all';
+  relationFilter.value = 'off';
+  page(anchor.value?.side === 'left' ? 'right' : 'left');
+}
 const savedScroll: Record<string, number> = {};
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 const resourcePlaceholder = computed(() => kind.value === 'regex' ? '选择范围' : '选择预设');
@@ -197,7 +221,7 @@ function searchable(entry: Entry) {
 }
 const signatureCache = new WeakMap<
   Entry,
-  { content: string; name: string; enabled: boolean; role: string; raw: object; signature: string }
+  { content: string; name: string; enabled: boolean; unused?: boolean; role: string; raw: object; signature: string }
 >();
 function signature(entry: Entry) {
   const old = signatureCache.get(entry);
@@ -206,6 +230,7 @@ function signature(entry: Entry) {
     old.content === entry.content &&
     old.name === entry.name &&
     old.enabled === entry.enabled &&
+    old.unused === entry.unused &&
     old.role === entry.role &&
     old.raw === entry.raw
   )
@@ -222,6 +247,7 @@ function signature(entry: Entry) {
     content: entry.content,
     name: entry.name,
     enabled: entry.enabled,
+    unused: entry.unused,
     role: entry.role,
     raw: entry.raw,
     signature: value,
@@ -238,8 +264,8 @@ function compare(a: Entry, b: Entry) {
 }
 const { relations, exact, related, working: comparing } = useComparison(() => ({
   left: docs.value.left, right: docs.value.right, anchor: dual.value ? anchorEntry.value : undefined,
-  anchorKey: anchor.value?.key, unused: includeUnused.value, filter: filter.value,
-  enabled: opened.value && dual.value, threshold: threshold.value,
+  anchorSide: anchor.value?.side, unused: includeUnused.value, filter: overviewEnabled.value ? 'all' : filter.value,
+  enabled: opened.value && dual.value && (!overviewEnabled.value || !!anchorEntry.value), threshold: threshold.value,
 }), signature, compare);
 const counts = computed(() => {
   const matches = [...relations.value.values()];
@@ -250,8 +276,8 @@ const counts = computed(() => {
     similar: matches.filter(m => m.type === 'similar').length,
   };
 });
-function matchFor(doc: WorkDocument, entry: Entry) {
-  return anchor.value && anchor.value.key !== doc.ref.key ? relations.value.get(entry.id) : undefined;
+function matchFor(side: Side, entry: Entry) {
+  return anchor.value && anchor.value.side !== side ? relations.value.get(entry.id) : undefined;
 }
 const lists = computed(() => {
   const output: Record<Side, Entry[]> = { left: [], right: [] };
@@ -273,20 +299,23 @@ const lists = computed(() => {
       )
         return false;
       if (filter.value === 'disabled' && entry.enabled) return false;
-      if (other && ['exact', 'different', 'only-left', 'only-right'].includes(filter.value)) {
+      if (overview.value) {
+        const row = overview.value[side].get(entry.id);
+        if (row && !matchesOverview(row, filter.value)) return false;
+      } else if (other && ['exact', 'different', 'only-left', 'only-right'].includes(filter.value)) {
         const hasExact = exact.value[side].has(entry.id);
         if (comparing.value && filter.value !== 'exact') return false;
         if (filter.value.startsWith('only-') && related.value[side].has(entry.id)) return false;
         if (filter.value === 'exact' && !hasExact) return false;
         if (filter.value === 'different' && (hasExact || !related.value[side].has(entry.id))) return false;
       }
-      if (anchorEntry.value && anchor.value?.key !== doc.ref.key && relationFilter.value !== 'off') {
+      if (anchorEntry.value && anchor.value?.side !== side && relationFilter.value !== 'off') {
         const match = relations.value.get(entry.id);
         if (!match || (relationFilter.value !== 'all' && match.type !== relationFilter.value)) return false;
       }
       return true;
     });
-    if (anchorEntry.value && anchor.value?.key !== doc.ref.key && relationFilter.value !== 'off') {
+    if (anchorEntry.value && anchor.value?.side !== side && relationFilter.value !== 'off') {
       const rank = { exact: 3, partial: 2, similar: 1 };
       list.sort(
         (a, b) =>
@@ -303,13 +332,17 @@ function toggleGroup(doc: WorkDocument, id: string) {
   const key = foldKey(doc, id);
   view.value.folds[key] = !view.value.folds[key];
 }
-const displayRows = computed(() => Object.fromEntries((['left', 'right'] as Side[]).map(side => {
+function rowsForSide(side: Side) {
   const doc = docs.value[side];
-  return [side, doc ? browseRows(lists.value[side], grouping.value ? doc.state.groups : [],
+  if (!doc) return [];
+  const marks = anchorEntry.value ? undefined : overview.value?.[side];
+  return browseRows(lists.value[side], grouping.value ? doc.state.groups : [],
     id => !!view.value.folds[foldKey(doc, id)],
-    !!searchQuery.value[side].trim() || !!rangeStart.value || !!(anchor.value && anchor.value.key !== doc.ref.key && relationFilter.value !== 'off'),
-  ) : []];
-})) as Record<Side, ReturnType<typeof browseRows>>);
+    !!searchQuery.value[side].trim() || (!!marks && filter.value !== 'all' && filter.value !== 'disabled') ||
+      !!rangeStart.value || !!(anchor.value && anchor.value.side !== side && relationFilter.value !== 'off'),
+  ).map(row => row.type === 'entry' ? { ...row, difference: marks?.get(row.entry.id) } : row);
+}
+const displayRows = computed(() => ({ left: rowsForSide('left'), right: rowsForSide('right') }));
 async function confirmSave(onlyKey?: string) {
   const documents = state.dirty.filter(d => !onlyKey || d.ref.key === onlyKey);
   if (!documents.length || busy.value || confirmBox.value) return false;
@@ -371,7 +404,10 @@ async function open(request: OpenRequest = {}) {
     if (doc && request.entryId) {
       const entry = [...doc.entries, ...doc.unused].find(e => e.id === request.entryId);
       if (entry) {
-        if (!request.action) anchor.value = { key: doc.ref.key, id: entry.id };
+        if (!request.action) {
+          anchor.value = { side: 'left', key: doc.ref.key, id: entry.id };
+          picked.value.left = entry.id;
+        }
         else clearComparison();
         if (request.action === 'edit') edit.value = { docKey: doc.ref.key, value: clone(entry) };
         if (request.action === 'group') rangeStart.value = { key: doc.ref.key, id: entry.id };
@@ -488,15 +524,16 @@ async function selectEntry(doc: WorkDocument, entry: Entry, side: Side) {
     notice.value = '已分组';
     return;
   }
-  if (dual.value && anchor.value?.key === doc.ref.key && anchor.value.id === entry.id) {
+  if (dual.value && anchor.value?.side === side && anchor.value.id === entry.id) {
     clearComparison(); return;
   }
-  const changingAnchor = anchor.value?.key === doc.ref.key && anchor.value.id !== entry.id;
+  const changingAnchor = anchor.value?.side === side && anchor.value.id !== entry.id;
+  if (!anchor.value && relationFilter.value === 'off') relationFilter.value = 'all';
   if (changingAnchor) { picked.value = { left: '', right: '' }; readerOpen.value = false; relationFilter.value = 'all'; }
   picked.value[side] = entry.id;
   readerPage.value = side;
   readerOpen.value = !dual.value || !!(pickedEntries.value.left && pickedEntries.value.right);
-  if (!anchor.value || anchor.value.key === doc.ref.key) anchor.value = { key: doc.ref.key, id: entry.id };
+  if (!anchor.value || anchor.value.side === side) anchor.value = { side, key: doc.ref.key, id: entry.id };
 }
 async function erase(doc: WorkDocument, ids: string[], detach = false) {
   menu.value = null;
@@ -767,7 +804,7 @@ function openEditor(doc: WorkDocument, entry: Entry, location?: { start: number;
 }
 function editPicked(side: Side) {
   const entry = pickedEntries.value[side], doc = docs.value[side];
-  if (entry && doc) { readerOpen.value = false; edit.value = { docKey: doc.ref.key, value: clone(entry) }; }
+  if (entry && doc) { closeReader(); edit.value = { docKey: doc.ref.key, value: clone(entry) }; }
 }
 watch(() => [kind.value, keys.value.left, keys.value.right], () => {
   clearComparison(); finishDrag(); notice.value = ''; menu.value = null; rangeStart.value = null;
@@ -816,7 +853,7 @@ watch(notice, () => {
 function keydown(e: KeyboardEvent) {
   if (e.key !== 'Escape') return;
   if (libraryOpen.value) return;
-  if (readerOpen.value) { readerOpen.value = false; return; }
+  if (readerOpen.value) { closeReader(); return; }
   if (dragSource.value) { finishDrag(); return; }
   if (confirmBox.value) finishConfirm(false);
   else if (edit.value) edit.value = null;
@@ -873,20 +910,26 @@ onBeforeUnmount(() => {
           ><button :class="{ active: kind === 'regex' }" @click="state.switchKind('regex')">正则</button>
         </div>
         <button :class="{ active: dual }" @click="dual = !dual">对比</button>
-        <button @click="openEntryLibrary()">条目库</button>
-        <button :class="{ active: toolsExpanded }" :aria-expanded="toolsExpanded" @click="toolsExpanded = !toolsExpanded">工具</button>
-        <select v-model="operation" class="extra-tool" aria-label="操作模式">
+        <select v-model="operation" aria-label="操作模式">
           <option value="browse">浏览</option>
           <option value="insert">插入 / 拖动</option>
         </select>
-        <select v-if="operation !== 'browse'" v-model="transferAction" class="extra-tool" aria-label="转移方式">
+        <select v-if="operation !== 'browse'" v-model="transferAction" aria-label="转移方式">
           <option value="copy">复制</option>
           <option value="move">移动</option>
         </select>
-        <select v-model="filter" class="extra-tool" aria-label="筛选">
+        <label v-if="dual" class="compact-check">
+          <input v-model="view.markDifferences" type="checkbox" />标记差异
+        </label>
+        <button :class="{ active: toolsExpanded }" :aria-expanded="toolsExpanded" @click="toolsExpanded = !toolsExpanded">工具</button>
+        <button class="extra-tool" @click="openEntryLibrary()">条目库</button>
+        <select v-model="filter" class="extra-tool entry-filter" aria-label="筛选">
           <option value="all">全部</option>
           <option v-if="dual" value="exact">相同</option>
           <option v-if="dual" value="different">有差异</option>
+          <template v-if="overviewEnabled">
+            <option v-for="(label, value) in differenceFilters" :key="value" :value="value">{{ label }}</option>
+          </template>
           <option v-if="dual" value="only-left">仅 {{ sideNames.left }}</option>
           <option v-if="dual" value="only-right">仅 {{ sideNames.right }}</option>
           <option value="disabled">已关闭</option>
@@ -921,6 +964,7 @@ onBeforeUnmount(() => {
             @click="relationFilter = 'similar'"
           >
             相似 {{ counts.similar }}</button
+          ><button :class="{ active: relationFilter === 'off' }" @click="chooseCounterpart">手选对侧</button
           ><button
             aria-label="清除对比基准"
             title="清除对比基准"
@@ -974,7 +1018,7 @@ onBeforeUnmount(() => {
                 type="search"
                 placeholder="搜索名称或正文"
                 :aria-label="`${sideNames[side]} 搜索`"
-              /><select v-if="grouping && docs[side].state.groups.length" v-model="groupFilter[side]" class="extra-tool" aria-label="分组筛选">
+              /><select v-if="grouping && docs[side].state.groups.length" v-model="groupFilter[side]" aria-label="分组筛选">
                 <option value="">所有分组</option>
                 <option value="__ungrouped">未分组</option>
                 <option v-for="g in docs[side].state.groups" :key="g.id" :value="g.id">{{ g.name }}</option>
@@ -987,7 +1031,7 @@ onBeforeUnmount(() => {
                 >{{ lists[side].length }} 条<span v-if="selected[docs[side].ref.key]?.length">
                   · 已选 {{ selected[docs[side].ref.key].length }}</span
                 ></small
-              ><small v-if="!toolsExpanded && (filter !== 'all' || (grouping && groupFilter[side]) || (kind === 'preset' && includeUnused))">筛选中</small
+              ><small v-if="!toolsExpanded && (filter !== 'all' || (kind === 'preset' && includeUnused))">筛选中</small
               ><span class="spacer"></span
               ><PresetTokens v-if="kind === 'preset' && host.countTokens" :key="docs[side].ref.key"
                 :doc="docs[side]" :host="host" :grouping="state.preferences.presetGrouping" />
@@ -1055,8 +1099,9 @@ onBeforeUnmount(() => {
                     'drop-after': dropTarget?.key === docs[side].ref.key && dropTarget.id === entry.id && !dropTarget.header && dropTarget.after,
                     disabled: !entry.enabled,
                     protected: protectedEntry(entry),
+                    'has-differences': !!row.difference?.changes.length,
                   },
-                  matchFor(docs[side], entry)?.type,
+                  matchFor(side, entry)?.type,
                 ]"
                 :data-entry-id="entry.id"
                 :data-group-id="row.groupId"
@@ -1080,7 +1125,7 @@ onBeforeUnmount(() => {
                   ><strong :title="entry.name">{{ entry.name }}</strong
                   ><span v-if="protectedEntry(entry)" class="tag protected-tag" title="不能复制、移动或删除">系统</span
                   ><span v-if="entry.unused" class="tag">未加入</span
-                  ><span v-if="matchFor(docs[side], entry)?.settingsDifferent" class="tag">设置不同</span
+                  ><span v-if="matchFor(side, entry)?.settingsDifferent" class="tag">设置不同</span
                   ><button
                     class="enabled-toggle"
                     :aria-label="entry.enabled ? '关闭条目' : '开启条目'"
@@ -1108,9 +1153,17 @@ onBeforeUnmount(() => {
                 </div>
                 <p>{{ entry.content.slice(0, 150) || '—' }}</p>
                 <div class="entry-meta">
-                  <span>{{ groupOf(docs[side], entry.id)?.name || '' }}</span
-                  ><span v-if="matchFor(docs[side], entry)"
-                    >{{ Math.round(matchFor(docs[side], entry)!.score * 100) }}%</span
+                  <span v-if="row.groupId">{{ groupOf(docs[side], entry.id)?.name }}</span>
+                  <template v-if="row.difference?.changes.length">
+                    <button v-if="row.difference.peer" class="difference-tag"
+                      :title="'对比 ' + row.difference.peer.name"
+                      @click.stop="openDifference(side, entry, row.difference.peer)">
+                      {{ row.difference.changes.map(change => change.label).join(' · ') }}
+                    </button>
+                    <span v-else class="difference-tag">{{ row.difference.changes[0].label }}</span>
+                  </template>
+                  <span v-if="matchFor(side, entry)"
+                    >{{ Math.round(matchFor(side, entry)!.score * 100) }}%</span
                   >
                 </div>
                 <div v-if="operation === 'insert' && sourceIds.length" class="insert-actions" @click.stop>
@@ -1191,7 +1244,7 @@ onBeforeUnmount(() => {
           <div v-else class="empty-state">选择后开始</div>
         </section>
       </main>
-      <TextCompare v-if="readerOpen" :left="pickedEntries.left" :right="dual ? pickedEntries.right : undefined" :names="sideNames" :initial-page="readerPage" @close="readerOpen=false" @edit="editPicked" />
+      <TextCompare v-if="readerOpen" :left="pickedEntries.left" :right="dual ? pickedEntries.right : undefined" :names="sideNames" :initial-page="readerPage" @close="closeReader" @edit="editPicked" />
       <footer class="prw-footer">
         <small v-if="operation !== 'browse'"
           :class="{ 'move-status': transferAction === 'move' }"
@@ -1722,7 +1775,8 @@ onBeforeUnmount(() => {
   background: var(--prw-inset);
 }
 .search-bar select {
-  max-width: 38%;
+  flex: 0 1 auto;
+  width: min(38%, 13em);
   font-size: 12px;
   background: var(--prw-inset);
 }
@@ -1762,6 +1816,9 @@ onBeforeUnmount(() => {
 }
 .entry:hover {
   background: var(--prw-hover);
+}
+.entry.has-differences {
+  border-left-color: var(--prw-accent);
 }
 .entry.exact {
   border-left-color: #79bf94;
@@ -1823,11 +1880,23 @@ onBeforeUnmount(() => {
 }
 .entry-meta {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 4px 8px;
+  flex-wrap: wrap;
   font-size: 10px;
   line-height: 1.2;
   color: var(--prw-muted);
   min-height: 12px;
+}
+.entry-meta .difference-tag {
+  --prw-button-padding: 2px 6px;
+  --prw-control-border: var(--prw-border);
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--prw-border);
+  border-radius: 5px;
+  color: var(--prw-text);
+  overflow-wrap: anywhere;
 }
 .tag {
   font-size: 10px;
@@ -2393,6 +2462,7 @@ onBeforeUnmount(() => {
 .prw-toolbar>button,.prw-toolbar>select,.search-bar>input,.search-bar>select{height:36px;box-sizing:border-box;margin:0;align-self:center}
 .prw-toolbar>.segmented{height:36px;box-sizing:border-box;align-items:stretch}.prw-toolbar>.segmented button{margin:0;display:flex;align-items:center}
 .prw-toolbar>select{width:auto;max-width:min(360px,100%)}
+.prw-toolbar > select.entry-filter { width: 9em; }
 .entry.can-drag{cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:pan-y}.entry.entry-dragging{cursor:grabbing;opacity:.6}.entry{position:relative}
 .entry.drop-before::before,.entry.drop-after::after{content:'';position:absolute;left:0;right:0;height:4px;background:var(--prw-accent);border-radius:3px;box-shadow:0 0 0 1px var(--prw-bg);pointer-events:none;z-index:3}
 .entry.drop-before::before{top:-6px}.entry.drop-after::after{bottom:-6px}.entry-list.drop-end{box-shadow:inset 0 -4px var(--prw-accent)}.group-chip.drop-group{outline:2px solid var(--prw-accent)}

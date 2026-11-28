@@ -1,8 +1,14 @@
 import { settingsOf, stable } from './core';
 import type { Entry } from './types';
-const labels: Record<string, string> = { enabled: '条目开关', role: '角色', position: '插入位置', depth: '深度', order: '顺序', triggers: '触发条件', overrides: '禁止覆盖', placement: '作用范围', trim: '裁剪文本', substitute: '替换宏', min: '最小深度', max: '最大深度', markdown: '仅显示', prompt: '仅提示词', edit: '编辑时运行' };
+const labels: Record<string, string> = {
+  enabled: '条目开关', role: '角色', systemPrompt: '系统条目标记', marker: '占位标记', listed: '列表归属',
+  position: '插入位置', depth: '深度', order: '顺序', triggers: '触发条件', overrides: '禁止覆盖',
+  placement: '作用范围', trim: '裁剪文本', substitute: '替换宏', min: '最小深度', max: '最大深度',
+  markdown: '仅显示', prompt: '仅提示词', edit: '编辑时运行',
+};
 function display(key: string, value: unknown): string {
   if (value === undefined || value === null) return '未设置';
+  if (key === 'listed') return value ? '已加入' : '未加入';
   if (typeof value === 'boolean') return key === 'enabled' ? value ? '启用' : '停用' : value ? '是' : '否';
   if (key === 'role') return ({ system: '系统', user: '用户', assistant: 'AI', regex: '正则' } as Record<string, string>)[String(value)] || String(value);
   if (key === 'position') return ({ 0: '相对位置', 1: '聊天内' } as Record<string, string>)[String(value)] || String(value);

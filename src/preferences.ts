@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const View = z.object({
   left: z.string().default(''), right: z.string().default(''),
-  dual: z.boolean().default(true), filter: z.string().default('all'),
+  dual: z.boolean().default(true), filter: z.string().default('all'), markDifferences: z.boolean().default(true),
   relation: z.string().default('all'), unused: z.boolean().default(false),
   search: z.object({ left: z.string(), right: z.string() }).default({ left: '', right: '' }),
   groups: z.object({ left: z.string(), right: z.string() }).default({ left: '', right: '' }),
